@@ -4,10 +4,12 @@ package collection
 type Request struct {
 	Name    string            `json:"name"`
 	Method  string            `json:"method"`
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Body    string            `json:"body,omitempty"`
-	Scripts []Script          `json:"scripts,omitempty"`
+	URL      string            `json:"url"`
+	Protocol string            `json:"protocol,omitempty"` // "HTTP", "WS", "SOCKETIO"
+	Headers  map[string]string `json:"headers,omitempty"`
+	Body     string            `json:"body,omitempty"`
+	Events   []SocketIOEvent   `json:"events,omitempty"`
+	Scripts  []Script          `json:"scripts,omitempty"`
 }
 
 //this struct will look like 

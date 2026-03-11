@@ -49,7 +49,7 @@ func NewRunCmd() *cobra.Command {
 			}
 
 			// Run Collection
-			engine := runner.NewCollectionRunner(nil, nil)
+			engine := runner.NewCollectionRunner(nil, nil, nil)
 			err = engine.Run(coll, ctx)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Execution Failed: %v\n", err)

@@ -19,7 +19,26 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		cr.runScripts("prerequest", req.Scripts, ctx)
 
 		// 2. Variable replacement (simple text replace for now)
-		url := cr.replaceVars(req.URL, ctx)
+		urlStr := cr.replaceVars(req.URL, ctx)
+
+		// Check Protocol
+		if strings.ToUpper(req.Protocol) == "SOCKETIO" {
+			headers := make(map[string]string)
+			for k, v := range req.Headers {
+				headers[k] = cr.replaceVars(v, ctx)
+			}
+			
+			err := cr.sioExecutor.Execute(urlStr, headers, req.Events)
+			if err != nil {
+				fmt.Printf("Socket.IO Request %s failed: %v\n", req.Name, err)
+			} else {
+				fmt.Printf("Socket.IO Execution %s completed.\n", req.Name)
+			}
+			
+			// 5. Test Scripts
+			cr.runScripts("test", req.Scripts, ctx)
+			continue
+		}
 
 		// 3. Build HTTP request
 		var bodyReader io.Reader
@@ -28,7 +47,7 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			bodyReader = bytes.NewBuffer(bodyBytes)
 		}
 
-		httpReq, err := http.NewRequest(strings.ToUpper(req.Method), url, bodyReader)
+		httpReq, err := http.NewRequest(strings.ToUpper(req.Method), urlStr, bodyReader)
 		if err != nil {
 			fmt.Printf("Failed to create request %s: %v\n", req.Name, err)
 			continue
