@@ -1,0 +1,7 @@
+{
+	"name": "dev",
+	"variables": {
+		"base_url": "https://httpbin.org",
+		"token": "secret-123"
+	}
+}

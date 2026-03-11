@@ -1,0 +1,20 @@
+{
+	"name": "Test Suite",
+	"requests": [
+		{
+			"name": "Get Request",
+			"method": "GET",
+			"url": "{{base_url}}/get?token={{token}}"
+		},
+		{
+			"name": "Post Request",
+			"method": "POST",
+			"url": "{{base_url}}/post",
+			"headers": {
+				"Content-Type": "application/json",
+				"X-Auth": "{{token}}"
+			},
+			"body": "{\"hello\":\"world\"}"
+		}
+	]
+}
