@@ -31,3 +31,4 @@ go.work.sum
 test-env.json
 test-collection.json
 test-socketio.json
+*.json
