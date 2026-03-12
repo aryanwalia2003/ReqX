@@ -1,0 +1,47 @@
+{
+  "name": "Scripting Test Collection",
+  "requests": [
+    {
+      "name": "Set and Test Variables",
+      "method": "GET",
+      "url": "http://localhost:8080/dummy",
+      "scripts": [
+        {
+          "type": "prerequest",
+          "exec": [
+            "console.warn('Running pre-request script...');",
+            "console.log('Setting auth_token to environment');",
+            "pm.environment.set('auth_token', 'mY_sEcReT_tOkEn_123');"
+          ]
+        },
+        {
+          "type": "test",
+          "exec": [
+            "// Test standard pass",
+            "pm.test('Token is injected properly', function() {",
+            "    var token = pm.environment.get('auth_token');",
+            "    pm.expect(token).toExist();",
+            "    pm.expect(token).toBe('mY_sEcReT_tOkEn_123');",
+            "});",
+            "",
+            "pm.test('Response parsing works', function() {",
+            "    console.log('Response Status is 404 (expected for dummy)');",
+            "    // In our test, it returns a 404 with HTML body usually from localhost",
+            "    // But if we hit a real JSON endpoint or just check headers...",
+            "    var contentType = pm.response.headers.get('Content-Type');",
+            "    console.log('Content-Type:', contentType);",
+            "    pm.expect(contentType).toExist();",
+            "});",
+            "",
+            "// Test standard fail",
+            "pm.test('This test should fail', function() {",
+            "    pm.expect(42).toEql(99);",
+            "});",
+            "",
+            "console.table({'user':'admin', 'id':1});"
+          ]
+        }
+      ]
+    }
+  ]
+}

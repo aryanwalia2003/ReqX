@@ -26,3 +26,10 @@ func (e *Environment) Merge(other *Environment) {
 		e.Set(k, v)
 	}
 }
+
+// Unset removes a variable by key entirely from the environment.
+func (e *Environment) Unset(key string) {
+	if e.Variables != nil {
+		delete(e.Variables, key)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"postman-cli/internal/collection"
+	"postman-cli/internal/scripting"
 )
 
 // Run executes all requests within a collection sequentially.
@@ -16,7 +17,7 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		fmt.Printf("Running request: %s\n", req.Name)
 
 		// 1. Pre-request Scripts
-		cr.runScripts("prerequest", req.Scripts, ctx)
+		cr.runScripts("prerequest", req.Scripts, ctx, nil)
 
 		// 2. Variable replacement (simple text replace for now)
 		urlStr := cr.replaceVars(req.URL, ctx)
@@ -36,7 +37,7 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			}
 			
 			// 5. Test Scripts
-			cr.runScripts("test", req.Scripts, ctx)
+			cr.runScripts("test", req.Scripts, ctx, nil)
 			continue
 		}
 
@@ -65,19 +66,36 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		}
 		
 		fmt.Printf("Status: %s\n", resp.Status)
+		
+		// Capture body for script access
+		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
+		// Prepare scripting response object
+		scriptResp := &scripting.ResponseAPI{
+			BodyString: string(bodyBytes),
+			HeadersMap: make(map[string]string),
+			Headers:    &scripting.ResponseHeaders{Headers: make(map[string]string)},
+		}
+		
+		for k, v := range resp.Header {
+			if len(v) > 0 {
+				scriptResp.HeadersMap[k] = v[0]
+				scriptResp.Headers.Headers[k] = v[0]
+			}
+		}
+
 		// 5. Test Scripts
-		cr.runScripts("test", req.Scripts, ctx)
+		cr.runScripts("test", req.Scripts, ctx, scriptResp)
 	}
 
 	return nil
 }
 
-func (cr *CollectionRunner) runScripts(scriptType string, scripts []collection.Script, ctx *RuntimeContext) {
+func (cr *CollectionRunner) runScripts(scriptType string, scripts []collection.Script, ctx *RuntimeContext, resp *scripting.ResponseAPI) {
 	for _, s := range scripts {
 		if s.Type == scriptType {
-			err := cr.scriptRunner.Execute(&s, ctx.Environment)
+			err := cr.scriptRunner.Execute(&s, ctx.Environment, resp)
 			if err != nil {
 				fmt.Printf("Warning: script execution failed: %v\n", err)
 			}
