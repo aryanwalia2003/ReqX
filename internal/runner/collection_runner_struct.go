@@ -12,6 +12,7 @@ type CollectionRunner struct {
 	sioExecutor           socketio_executor.SocketIOExecutor
 	scriptRunner          scripting.ScriptRunner
 	clearCookiesPerRequest bool // if true, jar is cleared before each request
+	verboseMode           bool
 }
 
 

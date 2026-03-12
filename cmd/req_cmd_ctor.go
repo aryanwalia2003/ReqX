@@ -20,6 +20,7 @@ func NewReqCmd() *cobra.Command {
 	var headers []string
 	var body string
 	var envFilePath string
+	var verbose bool
 
 	c := &cobra.Command{
 		Use:   "req [url]",
@@ -69,6 +70,9 @@ func NewReqCmd() *cobra.Command {
 			exec := http_executor.NewDefaultExecutor()
 			engine := runner.NewCollectionRunner(exec, nil, nil)
 
+			if verbose {
+				engine.SetVerbose(true)
+			}
 			err := engine.Run(dummyColl, ctx)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Request Failed: %v\n", err)
@@ -84,6 +88,7 @@ func NewReqCmd() *cobra.Command {
 	c.Flags().StringSliceVarP(&headers, "header", "H", []string{}, "Custom headers (can specify multiple times, e.g., 'Key: Value')")
 	c.Flags().StringVarP(&body, "data", "d", "", "HTTP POST/PUT data body")
 	c.Flags().StringVarP(&envFilePath, "env", "e", "", "Path to environment JSON file (for variable replacement)")
+	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output to see full request and response")
 
 	return c
 }

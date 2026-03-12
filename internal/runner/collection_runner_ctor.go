@@ -26,3 +26,7 @@ func NewCollectionRunner(exec *http_executor.DefaultExecutor, sio socketio_execu
 	}
 }
 
+func (cr *CollectionRunner) SetVerbose(v bool){
+	cr.verboseMode = v
+}
+

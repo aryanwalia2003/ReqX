@@ -17,6 +17,7 @@ func NewRunCmd() *cobra.Command {
 	var envFilePath string
 	var noCookies bool
 	var clearCookies bool
+	var verbose bool
 
 	c := &cobra.Command{
 		Use:   "run [collection.json]",
@@ -63,6 +64,9 @@ func NewRunCmd() *cobra.Command {
 			if clearCookies {
 				engine.SetClearCookiesPerRequest(true)
 			}
+			if verbose {
+				engine.SetVerbose(true)
+			}
 
 			err = engine.Run(coll, ctx)
 			if err != nil {
@@ -77,7 +81,8 @@ func NewRunCmd() *cobra.Command {
 	c.Flags().StringVarP(&envFilePath, "env", "e", "", "Path to the environment JSON file")
 	c.Flags().BoolVar(&noCookies, "no-cookies", false, "Disable cookie persistence for this run")
 	c.Flags().BoolVar(&clearCookies, "clear-cookies", false, "Clear cookie jar before each request")
-
+	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output to see full request and response")
+	
 	return c
 }
 

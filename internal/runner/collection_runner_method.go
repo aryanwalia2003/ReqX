@@ -1,15 +1,19 @@
 package runner
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"strings"
 
 	"postman-cli/internal/collection"
 	"postman-cli/internal/http_executor"
 	"postman-cli/internal/scripting"
+
+	"github.com/fatih/color"
 )
 
 // SetClearCookiesPerRequest controls whether the cookie jar is cleared before each request.
@@ -19,6 +23,8 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 
 // Run executes all requests within a collection sequentially.
 func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext) error {
+	verboseColor :=color.New(color.FgYellow)
+
 	for _, req := range coll.Requests {
 		fmt.Printf("Running request: %s\n", req.Name)
 
@@ -67,6 +73,20 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		// 3a. Apply auth — request-level overrides collection-level
 		effectiveAuth := cr.resolveAuth(req.Auth, coll.Auth, ctx)
 		http_executor.ApplyAuth(httpReq, effectiveAuth)
+
+		if cr.verboseMode{
+			verboseColor.Printf("--------------------REQUEST--------------------\n")
+			dump,err :=httputil.DumpRequestOut(httpReq,true)
+			if err != nil{
+				fmt.Printf("Failed to dump request: %v\n", err)
+			}else{
+				scanner :=bufio.NewScanner(bytes.NewReader(dump))
+				for scanner.Scan(){
+					verboseColor.Printf("%s\n", scanner.Text())
+				}
+			}
+			verboseColor.Printf("--------------------END REQUEST--------------------\n")
+		}
 
 		// 3b. Optionally clear cookies before each request
 		if cr.clearCookiesPerRequest {
