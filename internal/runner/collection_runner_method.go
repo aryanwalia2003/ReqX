@@ -3,6 +3,7 @@ package runner
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -106,6 +107,39 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
+		bodycolor := color.New(color.FgGreen)
+		if cr.verboseMode {
+			bodycolor.Println("-------------------- RESPONSE -------------------")
+			bodycolor.Printf("< %s %s\n", resp.Proto, resp.Status)
+			for key, values := range resp.Header {
+				if resp.StatusCode >= 400 && isNoisyHeader(key) {
+					continue
+				}
+				for _, value := range values {
+					bodycolor.Printf("< %s: %s\n", key, value)
+				}
+			}
+			bodycolor.Println("<")
+
+			// Pretty-print if JSON, otherwise print raw
+			if len(bodyBytes) > 0 {
+				if strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+					var prettyJSON bytes.Buffer
+					if err := json.Indent(&prettyJSON, bodyBytes, "", "  "); err == nil {
+						bodycolor.Println(prettyJSON.String())
+					} else {
+						bodycolor.Println(string(bodyBytes)) // Fallback to raw if indent fails
+					}
+				} else {
+					bodycolor.Println(string(bodyBytes)) // Not JSON, print as is
+				}
+			}
+			bodycolor.Println("---------------------------------------------")
+		}
+
+		fmt.Printf("Status: %s\n", resp.Status)
+
+
 		// Prepare scripting response object
 		scriptResp := &scripting.ResponseAPI{
 			BodyString: string(bodyBytes),
@@ -176,6 +210,28 @@ func (cr *CollectionRunner) replaceVars(input string, ctx *RuntimeContext) strin
 		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
 	}
 	return out
+}
+
+func isNoisyHeader(header string) bool {
+	noisy := map[string]bool{
+		"Content-Security-Policy":           true,
+		"Strict-Transport-Security":         true,
+		"X-Dns-Prefetch-Control":            true,
+		"X-Frame-Options":                   true,
+		"X-Xss-Protection":                  true,
+		"X-Permitted-Cross-Domain-Policies": true,
+		"Cross-Origin-Opener-Policy":        true,
+		"Cross-Origin-Resource-Policy":      true,
+		"Origin-Agent-Cluster":              true,
+		"Referrer-Policy":                   true,
+		"X-Content-Type-Options":            true,
+		"X-Download-Options":                true,
+		"Etag":                              true,
+		"Vary":                              true,
+		"Access-Control-Allow-Credentials":  true,
+		"Date":                              true,
+	}
+	return noisy[http.CanonicalHeaderKey(header)]
 }
 
 
