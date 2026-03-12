@@ -24,37 +24,24 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 
 // Run executes all requests within a collection sequentially.
 func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext) error {
-	verboseColor :=color.New(color.FgYellow)
+	verboseColor := color.New(color.FgYellow)
 
 	for _, req := range coll.Requests {
-		fmt.Printf("Running request: %s\n", req.Name)
+		fmt.Printf("\n▶ Running request: %s\n", req.Name)
 
-		// 1. Pre-request Scripts
 		cr.runScripts("prerequest", req.Scripts, ctx, nil)
-
-		// 2. Variable replacement
 		urlStr := cr.replaceVars(req.URL, ctx)
 
-		// Check Protocol
 		if strings.ToUpper(req.Protocol) == "SOCKETIO" {
 			headers := make(map[string]string)
 			for k, v := range req.Headers {
 				headers[k] = cr.replaceVars(v, ctx)
 			}
-
-			err := cr.sioExecutor.Execute(urlStr, headers, req.Events)
-			if err != nil {
-				fmt.Printf("Socket.IO Request %s failed: %v\n", req.Name, err)
-			} else {
-				fmt.Printf("Socket.IO Execution %s completed.\n", req.Name)
-			}
-
-			// 5. Test Scripts
+			cr.sioExecutor.Execute(urlStr, headers, req.Events)
 			cr.runScripts("test", req.Scripts, ctx, nil)
 			continue
 		}
 
-		// 3. Build HTTP request
 		var bodyReader io.Reader
 		if req.Body != "" {
 			bodyBytes := []byte(cr.replaceVars(req.Body, ctx))
@@ -63,98 +50,79 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 
 		httpReq, err := http.NewRequest(strings.ToUpper(req.Method), urlStr, bodyReader)
 		if err != nil {
-			fmt.Printf("Failed to create request %s: %v\n", req.Name, err)
+			fmt.Printf("Error: %v\n", err)
 			continue
 		}
 
 		for k, v := range req.Headers {
 			httpReq.Header.Set(k, cr.replaceVars(v, ctx))
 		}
+		http_executor.ApplyAuth(httpReq, cr.resolveAuth(req.Auth, coll.Auth, ctx))
 
-		// 3a. Apply auth — request-level overrides collection-level
-		effectiveAuth := cr.resolveAuth(req.Auth, coll.Auth, ctx)
-		http_executor.ApplyAuth(httpReq, effectiveAuth)
-
-		if cr.verboseMode{
-			verboseColor.Printf("--------------------REQUEST--------------------\n")
-			dump,err :=httputil.DumpRequestOut(httpReq,true)
-			if err != nil{
-				fmt.Printf("Failed to dump request: %v\n", err)
-			}else{
-				scanner :=bufio.NewScanner(bytes.NewReader(dump))
-				for scanner.Scan(){
-					verboseColor.Printf("%s\n", scanner.Text())
-				}
+		if cr.verboseMode {
+			verboseColor.Println("-------------------- REQUEST --------------------")
+			dump, _ := httputil.DumpRequestOut(httpReq, true)
+			scanner := bufio.NewScanner(strings.NewReader(string(dump)))
+			for scanner.Scan() {
+				verboseColor.Printf("> %s\n", scanner.Text())
 			}
-			verboseColor.Printf("--------------------END REQUEST--------------------\n")
+			verboseColor.Println("-------------------------------------------------")
 		}
 
-		// 3b. Optionally clear cookies before each request
 		if cr.clearCookiesPerRequest {
 			cr.executor.ClearCookies()
 		}
 
-		// 4. Execute HTTP request
 		resp, err := cr.executor.Execute(httpReq)
 		if err != nil {
-			fmt.Printf("Request %s failed: %v\n", req.Name, err)
+			fmt.Printf("Request Failed: %v\n", err)
 			continue
 		}
 
-		fmt.Printf("Status: %s\n", resp.Status)
-
-		// Capture body for script access
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
-		bodycolor := color.New(color.FgGreen)
 		if cr.verboseMode {
-			bodycolor.Println("-------------------- RESPONSE -------------------")
-			bodycolor.Printf("< %s %s\n", resp.Proto, resp.Status)
+			verboseColor.Println("-------------------- RESPONSE -------------------")
+			verboseColor.Printf("< %s %s\n", resp.Proto, resp.Status)
 			for key, values := range resp.Header {
-				if resp.StatusCode >= 400 && isNoisyHeader(key) {
+				if isNoisyHeader(key) {
 					continue
 				}
 				for _, value := range values {
-					bodycolor.Printf("< %s: %s\n", key, value)
+					verboseColor.Printf("< %s: %s\n", key, value)
 				}
 			}
-			bodycolor.Println("<")
+			verboseColor.Println("<")
 
-			// Pretty-print if JSON, otherwise print raw
+			// Always show body, pretty-printed if it's JSON
 			if len(bodyBytes) > 0 {
-				if strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
+				contentType := resp.Header.Get("Content-Type")
+				if strings.Contains(contentType, "json") {
 					var prettyJSON bytes.Buffer
 					if err := json.Indent(&prettyJSON, bodyBytes, "", "  "); err == nil {
-						bodycolor.Println(prettyJSON.String())
+						fmt.Println(prettyJSON.String())
 					} else {
-						bodycolor.Println(string(bodyBytes)) // Fallback to raw if indent fails
+						fmt.Println(string(bodyBytes))
 					}
 				} else {
-					bodycolor.Println(string(bodyBytes)) // Not JSON, print as is
+					fmt.Println(string(bodyBytes))
 				}
 			}
-			bodycolor.Println("---------------------------------------------")
+			verboseColor.Println("-------------------------------------------------")
 		}
 
 		fmt.Printf("Status: %s\n", resp.Status)
 
-
-		// Prepare scripting response object
 		scriptResp := &scripting.ResponseAPI{
 			BodyString: string(bodyBytes),
-			HeadersMap: make(map[string]string),
 			Headers:    &scripting.ResponseHeaders{Headers: make(map[string]string)},
 		}
-
 		for k, v := range resp.Header {
 			if len(v) > 0 {
-				scriptResp.HeadersMap[k] = v[0]
 				scriptResp.Headers.Headers[k] = v[0]
 			}
 		}
-
-		// 5. Test Scripts
 		cr.runScripts("test", req.Scripts, ctx, scriptResp)
 	}
 
