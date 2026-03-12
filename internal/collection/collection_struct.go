@@ -3,6 +3,7 @@ package collection
 // Collection groups requests and scripts together.
 type Collection struct {
 	Name     string    `json:"name"`
+	Auth     *Auth     `json:"auth,omitempty"`
 	Requests []Request `json:"requests"`
 }
 

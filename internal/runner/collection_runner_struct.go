@@ -8,8 +8,10 @@ import (
 
 // CollectionRunner handles executing a full collection of requests.
 type CollectionRunner struct {
-	executor     http_executor.RequestExecutor
-	sioExecutor  socketio_executor.SocketIOExecutor
-	scriptRunner scripting.ScriptRunner
+	executor              *http_executor.DefaultExecutor
+	sioExecutor           socketio_executor.SocketIOExecutor
+	scriptRunner          scripting.ScriptRunner
+	clearCookiesPerRequest bool // if true, jar is cleared before each request
 }
+
 

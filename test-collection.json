@@ -1,20 +1,35 @@
 {
 	"name": "Test Suite",
+	"auth": {
+		"type": "bearer",
+		"token": "{{token}}"
+	},
 	"requests": [
 		{
-			"name": "Get Request",
+			"name": "GET (inherits collection bearer auth)",
 			"method": "GET",
-			"url": "{{base_url}}/get?token={{token}}"
+			"url": "{{base_url}}/get"
 		},
 		{
-			"name": "Post Request",
+			"name": "POST (overrides with apikey in header)",
 			"method": "POST",
 			"url": "{{base_url}}/post",
+			"auth": {
+				"type": "apikey",
+				"key": "X-API-Key",
+				"value": "{{token}}",
+				"in": "header"
+			},
 			"headers": {
-				"Content-Type": "application/json",
-				"X-Auth": "{{token}}"
+				"Content-Type": "application/json"
 			},
 			"body": "{\"hello\":\"world\"}"
+		},
+		{
+			"name": "GET (explicit no auth)",
+			"method": "GET",
+			"url": "{{base_url}}/get",
+			"auth": { "type": "none" }
 		}
 	]
 }

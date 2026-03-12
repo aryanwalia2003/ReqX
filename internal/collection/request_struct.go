@@ -2,12 +2,13 @@ package collection
 
 // Request represents a single API or Socket call.
 type Request struct {
-	Name    string            `json:"name"`
-	Method  string            `json:"method"`
+	Name     string            `json:"name"`
+	Method   string            `json:"method"`
 	URL      string            `json:"url"`
 	Protocol string            `json:"protocol,omitempty"` // "HTTP", "WS", "SOCKETIO"
 	Headers  map[string]string `json:"headers,omitempty"`
 	Body     string            `json:"body,omitempty"`
+	Auth     *Auth             `json:"auth,omitempty"`
 	Events   []SocketIOEvent   `json:"events,omitempty"`
 	Scripts  []Script          `json:"scripts,omitempty"`
 }

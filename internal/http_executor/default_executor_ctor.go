@@ -5,11 +5,14 @@ import (
 	"time"
 )
 
-// NewDefaultExecutor constructs a new HTTP executor.
-func NewDefaultExecutor() RequestExecutor {
+// NewDefaultExecutor constructs a new HTTP executor with cookie jar enabled.
+func NewDefaultExecutor() *DefaultExecutor {
+	jar := NewManagedCookieJar()
 	return &DefaultExecutor{
+		jar: jar,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
+			Jar:     jar,
 		},
 	}
 }
