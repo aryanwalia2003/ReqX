@@ -20,7 +20,18 @@ func NewCollectionCmd() *cobra.Command {
 		Use:     "collection",
 		Aliases: []string{"coll"},
 		Short:   "Manage requests inside a collection JSON file",
-		Long:    "View, add, or reorder requests permanently within a collection file without opening an editor.",
+		Long: `📂 View, add, or reorder requests permanently within a collection file.
+Unlike the 'run' command (which works in-memory), these commands modify the 
+underlying .json file. This allows you to build and maintain your API collections 
+entirely from the command line without opening an editor.`,
+		Example: `  # List all requests to see their order
+  postman-cli collection list my-api.json
+  
+  # Add a new GET request
+  postman-cli collection add my-api.json -n "Get Profile" -u "{{base_url}}/me"
+  
+  # Reorder requests
+  postman-cli collection move my-api.json 5 1`,
 	}
 
 	cmd.AddCommand(newListCmd())
@@ -34,7 +45,11 @@ func newListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list [collection.json]",
 		Short: "List all requests in a collection with their index",
-		Args:  cobra.ExactArgs(1),
+		Long: `📋 Prints a numbered list of all requests in the collection.
+The index (1, 2, 3...) shown here corresponds to the order in which 
+'run' will execute them. Use these indices with the 'move' command.`,
+		Example: `  postman-cli collection list vuc-collection.json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
 			coll, err := loadCollection(filePath)
@@ -70,7 +85,14 @@ func newAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add [collection.json]",
 		Short: "Add a new request to the end of a collection",
-		Args:  cobra.ExactArgs(1),
+		Long: `➕ Append a new request to the end of the specified collection file.
+This command simplifies the process of adding basic requests without 
+manually editing complex JSON structures.`,
+		Example: `  postman-cli collection add my-api.json \
+    -n "Get Status" \
+    -u "http://localhost:8080/status" \
+    -H "Authorization: Bearer {{token}}"`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
 			coll, err := loadCollection(filePath)

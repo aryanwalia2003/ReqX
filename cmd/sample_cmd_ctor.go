@@ -14,6 +14,10 @@ func NewSampleCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "sample",
 		Short: "Generate sample collection and environment files",
+		Long: `📄 Create boilerplate JSON files in the current directory.
+These templates serve as a perfect starting point for learning the 
+postman-cli's JSON format.`,
+		Example: `  postman-cli sample`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err1 := os.WriteFile("sample-collection.json", []byte(storage.SampleCollectionJSON), 0644)
 			err2 := os.WriteFile("sample-env.json", []byte(storage.SampleEnvJSON), 0644)

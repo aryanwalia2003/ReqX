@@ -24,7 +24,24 @@ func NewSioCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "sio [url]",
 		Short: "Start an interactive Socket.IO (v4) debugging session",
-		Args:  cobra.ExactArgs(1),
+		Long: `🔌 Open a real-time, interactive REPL for Socket.IO v4 servers.
+This command allows you to connect to a Socket.IO server and manually 
+emit events or listen for incoming data in real-time.
+
+REPL Commands:
+  listen <event_name>          - Start tracking an event and print its data
+  emit <event_name> [payload]  - Send an event with JSON or string data
+  exit / quit                   - Close the connection and exit`,
+		Example: `  # Connect to a local server
+  postman-cli sio http://localhost:3000
+  
+  # Connect with Auth headers
+  postman-cli sio wss://api.example.com -H "Authorization: Bearer my-token"
+  
+  # Once inside the REPL:
+  > listen chat:message
+  > emit chat:message {"text": "hello world"}`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rawURL := args[0]
 

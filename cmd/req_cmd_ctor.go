@@ -25,7 +25,18 @@ func NewReqCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "req [url]",
 		Short: "Send a single quick HTTP request (curl style)",
-		Args:  cobra.ExactArgs(1),
+		Long: `🚀 Send a standalone HTTP request without needing a collection file.
+This command is perfect for quick API testing. It supports the same 
+environment variable injection and verbose output as the 'run' command.`,
+		Example: `  # Basic GET
+  postman-cli req https://api.github.com/users/octocat
+  
+  # POST with body and headers
+  postman-cli req http://localhost:8080/login \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"user":"admin"}'`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			targetURL := args[0]
 

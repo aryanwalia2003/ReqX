@@ -29,7 +29,30 @@ func NewRunCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "run [collection.json]",
 		Short: "Execute a collection of requests",
-		Args:  cobra.ExactArgs(1),
+		Long: `🏃 Execute all or specific requests from a collection file.
+This command parses the provided JSON collection and runs each request sequentially.
+It supports environment variable substitution, cookie persistence, and real-time scripting.
+
+Advanced Features:
+1. Substring Filtering: Use --request to run only a subset of requests.
+2. In-Memory Injection: Use the --inject flags to temporarily add a request 
+   at a specific position without modifying the source JSON file. 
+   This is perfect for adding a 'setup' or 'cleanup' task for a single run.`,
+		Example: `  # Run everything in a collection
+  postman-cli run my-api.json
+  
+  # Run with an environment file
+  postman-cli run my-api.json --env prod.json
+  
+  # Run only requests containing "Login" or "Auth"
+  postman-cli run my-api.json -f "Login"
+  
+  # Inject a temporary 'Health Check' at the start (index 1)
+  postman-cli run my-api.json --inject-index 1 --inject-name "Health" --inject-url "http://api/health"
+  
+  # Disable cookies for a stateless run
+  postman-cli run my-api.json --no-cookies`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			collectionPath := args[0]
 
