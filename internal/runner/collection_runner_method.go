@@ -3,10 +3,12 @@ package runner
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"strings"
 	"time"
@@ -26,25 +28,16 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 // Run executes all requests within a collection sequentially.
 func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext) error {
 	verboseColor := color.New(color.FgYellow)
+	timingColor := color.New(color.FgHiCyan)
 
-	// =======================================================
-	// THE KILL SWITCH
-	// =======================================================
-	// Create a channel that will be used to signal all background sockets to stop
 	stopAsyncSockets := make(chan struct{})
 
-	// Defer ensures this block runs at the VERY END of the execution, 
-	// no matter if the loop finishes normally or crashes.
 	defer func() {
 		fmt.Println("\n🏁 Collection execution finished.")
 		fmt.Println("⏳ Waiting 3 seconds for any final trailing socket events...")
 		time.Sleep(3 * time.Second)
-		
-		// This broadcasts a signal to ALL running background sockets to close
 		close(stopAsyncSockets)
-		
-		// Wait a tiny bit for logs to flush before the terminal completely exits
-		time.Sleep(500 * time.Millisecond) 
+		time.Sleep(500 * time.Millisecond)
 	}()
 
 	for _, req := range coll.Requests {
@@ -59,7 +52,6 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 				headers[k] = cr.replaceVars(v, ctx)
 			}
 
-			// 1. Resolve events
 			var resolvedEvents []collection.SocketIOEvent
 			for _, ev := range req.Events {
 				resolvedEvents = append(resolvedEvents, collection.SocketIOEvent{
@@ -69,16 +61,11 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 				})
 			}
 
-			// 2. Check if Async or Sync
 			if req.Async {
 				fmt.Printf("Starting Background Socket.IO connection for '%s'...\n", req.Name)
-				
-				// Channel to synchronize connection phase
 				readyChan := make(chan error, 1)
 
-				// Background execution
 				go func(name, url string, hdrs map[string]string, events []collection.SocketIOEvent) {
-					// IMPORTANT: Pass both readyChan and stopAsyncSockets here!
 					err := cr.sioExecutor.Execute(url, hdrs, events, readyChan, stopAsyncSockets)
 					if err != nil {
 						color.Red("\n[BACKGROUND ERROR] Socket.IO '%s' failed: %v\n", name, err)
@@ -87,9 +74,8 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 					}
 				}(req.Name, urlStr, headers, resolvedEvents)
 
-				// Wait for the exact moment the socket connects
 				color.Cyan("⏳ Waiting for socket to establish connection...\n")
-				err := <-readyChan // BLOCKS here until the background thread sends a signal
+				err := <-readyChan
 
 				if err != nil {
 					color.Yellow("⚠ Background Socket failed to connect: %v. Continuing collection anyway...\n", err)
@@ -97,19 +83,16 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 					color.Green("✔ Background Socket is ready and listening continuously!\n")
 				}
 
-				// Move to next request immediately
 				cr.runScripts("test", req.Scripts, ctx, nil)
 				continue
 
 			} else {
-				// Synchronous execution (Pass nil for readyChan and stopChan as we don't need mid-flight sync or infinite wait)
 				err := cr.sioExecutor.Execute(urlStr, headers, resolvedEvents, nil, nil)
 				if err != nil {
 					fmt.Printf("Socket.IO Request %s failed: %v\n", req.Name, err)
 				} else {
 					fmt.Printf("Socket.IO Request %s successful\n", req.Name)
 				}
-				
 				cr.runScripts("test", req.Scripts, ctx, nil)
 				continue
 			}
@@ -146,14 +129,54 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			cr.executor.ClearCookies()
 		}
 
+		// =======================================================
+		// HTTP TRACING (TIMING BREAKDOWN)
+		// =======================================================
+		var t0, dnsStart, dnsDone, connStart, connDone, tlsStart, tlsDone, reqDone, resStart time.Time
+
+		trace := &httptrace.ClientTrace{
+			DNSStart:             func(_ httptrace.DNSStartInfo) { dnsStart = time.Now() },
+			DNSDone:              func(_ httptrace.DNSDoneInfo) { dnsDone = time.Now() },
+			ConnectStart:         func(_, _ string) { connStart = time.Now() },
+			ConnectDone:          func(net, addr string, err error) { connDone = time.Now() },
+			TLSHandshakeStart:    func() { tlsStart = time.Now() },
+			TLSHandshakeDone:     func(_ tls.ConnectionState, _ error) { tlsDone = time.Now() },
+			WroteRequest:         func(_ httptrace.WroteRequestInfo) { reqDone = time.Now() },
+			GotFirstResponseByte: func() { resStart = time.Now() },
+		}
+
+		// Attach the tracer to the request
+		httpReq = httpReq.WithContext(httptrace.WithClientTrace(httpReq.Context(), trace))
+
+		// Execute HTTP request and start timer
+		t0 = time.Now()
 		resp, err := cr.executor.Execute(httpReq)
 		if err != nil {
 			fmt.Printf("Request Failed: %v\n", err)
 			continue
 		}
 
+		// Read Body and stop timer
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		tDone := time.Now()
+
+		// Calculate Durations safely (Handling connection reuse)
+		var dnsTime, tcpTime, tlsTime, ttfbTime, transferTime time.Duration
+		if !dnsDone.IsZero() { dnsTime = dnsDone.Sub(dnsStart) }
+		if !connDone.IsZero() { tcpTime = connDone.Sub(connStart) }
+		if !tlsDone.IsZero() { tlsTime = tlsDone.Sub(tlsStart) }
+		if !resStart.IsZero() {
+			if !reqDone.IsZero() {
+				ttfbTime = resStart.Sub(reqDone)
+			} else {
+				ttfbTime = resStart.Sub(t0) // Fallback
+			}
+			transferTime = tDone.Sub(resStart)
+		}
+		totalTime := tDone.Sub(t0)
+
+		// =======================================================
 
 		if cr.verboseMode {
 			verboseColor.Println("-------------------- RESPONSE -------------------")
@@ -168,7 +191,6 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			}
 			verboseColor.Println("<")
 
-			// Always show body, pretty-printed if it's JSON
 			if len(bodyBytes) > 0 {
 				contentType := resp.Header.Get("Content-Type")
 				if strings.Contains(contentType, "json") {
@@ -182,10 +204,25 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 					fmt.Println(string(bodyBytes))
 				}
 			}
-			verboseColor.Println("-------------------------------------------------")
+
+			// Print Detailed Timing Breakdown
+			timingColor.Println("-------------------- TIMINGS --------------------")
+			timingColor.Printf("  DNS Lookup     : %v\n", roundMs(dnsTime))
+			timingColor.Printf("  TCP Connection : %v\n", roundMs(tcpTime))
+			timingColor.Printf("  TLS Handshake  : %v\n", roundMs(tlsTime))
+			timingColor.Printf("  Server (TTFB)  : %v\n", roundMs(ttfbTime))
+			timingColor.Printf("  Data Transfer  : %v\n", roundMs(transferTime))
+			timingColor.Printf("  --------------------------\n")
+			timingColor.Printf("  Total Time     : %v\n", roundMs(totalTime))
+			timingColor.Println("-------------------------------------------------")
 		}
 
-		fmt.Printf("Status: %s\n", resp.Status)
+		// Always print a clean summary for non-verbose runs
+		statusColor := color.New(color.FgHiGreen).SprintfFunc()
+		if resp.StatusCode >= 400 {
+			statusColor = color.New(color.FgHiRed).SprintfFunc()
+		}
+		fmt.Printf("Status: %s  |  Time: %v\n", statusColor(resp.Status), roundMs(totalTime))
 
 		scriptResp := &scripting.ResponseAPI{
 			BodyString: string(bodyBytes),
@@ -202,17 +239,12 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 	return nil
 }
 
-// resolveAuth returns the effective auth, applying variable replacement.
-// Precedence: request.Auth > collection.Auth > nil.
+// ... (resolveAuth, runScripts, replaceVars, isNoisyHeader remain the same) ...
+
 func (cr *CollectionRunner) resolveAuth(reqAuth, collAuth *collection.Auth, ctx *RuntimeContext) *collection.Auth {
 	src := reqAuth
-	if src == nil {
-		src = collAuth
-	}
-	if src == nil {
-		return nil
-	}
-	// Deep-copy with vars replaced so original struct is not mutated.
+	if src == nil { src = collAuth }
+	if src == nil { return nil }
 	resolved := &collection.Auth{
 		Type:     src.Type,
 		Token:    cr.replaceVars(src.Token, ctx),
@@ -243,9 +275,7 @@ func (cr *CollectionRunner) runScripts(scriptType string, scripts []collection.S
 }
 
 func (cr *CollectionRunner) replaceVars(input string, ctx *RuntimeContext) string {
-	if ctx == nil || ctx.Environment == nil {
-		return input
-	}
+	if ctx == nil || ctx.Environment == nil { return input }
 	out := input
 	for k, v := range ctx.Environment.Variables {
 		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
@@ -255,22 +285,21 @@ func (cr *CollectionRunner) replaceVars(input string, ctx *RuntimeContext) strin
 
 func isNoisyHeader(header string) bool {
 	noisy := map[string]bool{
-		"Content-Security-Policy":           true,
-		"Strict-Transport-Security":         true,
-		"X-Dns-Prefetch-Control":            true,
-		"X-Frame-Options":                   true,
-		"X-Xss-Protection":                  true,
-		"X-Permitted-Cross-Domain-Policies": true,
-		"Cross-Origin-Opener-Policy":        true,
-		"Cross-Origin-Resource-Policy":      true,
-		"Origin-Agent-Cluster":              true,
-		"Referrer-Policy":                   true,
-		"X-Content-Type-Options":            true,
-		"X-Download-Options":                true,
-		"Etag":                              true,
-		"Vary":                              true,
-		"Access-Control-Allow-Credentials":  true,
-		"Date":                              true,
+		"Content-Security-Policy": true, "Strict-Transport-Security": true,
+		"X-Dns-Prefetch-Control": true, "X-Frame-Options": true,
+		"X-Xss-Protection": true, "X-Permitted-Cross-Domain-Policies": true,
+		"Cross-Origin-Opener-Policy": true, "Cross-Origin-Resource-Policy": true,
+		"Origin-Agent-Cluster": true, "Referrer-Policy": true,
+		"X-Content-Type-Options": true, "X-Download-Options": true,
+		"Etag": true, "Vary": true, "Access-Control-Allow-Credentials": true, "Date": true,
 	}
 	return noisy[http.CanonicalHeaderKey(header)]
+}
+
+// Helper to round durations to milliseconds to make it readable like Postman
+func roundMs(d time.Duration) string {
+	if d == 0 {
+		return "0ms" // Happens when connection is re-used (Keep-Alive)
+	}
+	return fmt.Sprintf("%dms", d.Milliseconds())
 }
