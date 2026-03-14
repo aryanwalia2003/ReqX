@@ -64,6 +64,10 @@ Advanced Features:
 				iterations = 1
 			}
 
+			// This slice will hold ALL metrics from ALL iterations
+			allMetrics := make([][]runner.RequestMetric, 0, iterations)
+			totalStartTime := time.Now()
+
 			// =========================================================
 			// ▼▼▼ NEW: ITERATION LOOP STARTS HERE (OUTERMOST) ▼▼▼
 			// =========================================================
@@ -166,11 +170,14 @@ Advanced Features:
 					engine.SetVerbose(true)
 				}
 
-				err = engine.Run(coll, ctx)
+				runMetrics, err := engine.Run(coll, ctx)
 				if err != nil {
 					color.Red("Iteration %d failed with error: %v\n", i, err)
 					// We continue to the next iteration even on failure
 				}
+
+				// Add this iteration's metrics to the master list
+				allMetrics = append(allMetrics, runMetrics)
 
 				// Add a small delay between iterations
 				if i < iterations {
@@ -178,6 +185,16 @@ Advanced Features:
 					time.Sleep(1 * time.Second)
 				}
 			} // <-- ITERATION LOOP ENDS HERE
+
+			// ==========================================
+			// NEW: Print the Final Aggregated Summary
+			// ==========================================
+			if iterations > 1 {
+				printAggregatedSummary(allMetrics, time.Since(totalStartTime))
+			} else if len(allMetrics) > 0 {
+				// If only one iteration, print the simple summary
+				printSimpleSummary(allMetrics[0], time.Since(totalStartTime))
+			}
 
 			return nil
 		},
@@ -200,4 +217,95 @@ Advanced Features:
 	c.Flags().StringSliceVar(&injHeaders, "inject-header", []string{}, "Header for temporary request (e.g., 'Key: Value')")
 
 	return c
+}
+
+// =========================================================
+// ▼▼▼ NEW HELPER FUNCTIONS ▼▼▼
+// =========================================================
+
+// printSimpleSummary prints a summary for a single run.
+func printSimpleSummary(metrics []runner.RequestMetric, totalTime time.Duration) {
+	fmt.Println("\n" + strings.Repeat("=", 70))
+	color.New(color.FgHiCyan, color.Bold).Println("  EXECUTION SUMMARY")
+	fmt.Println(strings.Repeat("=", 70))
+
+	var totalHttp, successHttp, failedHttp int
+	var maxTime, minTime, totalHttpTime time.Duration
+	var slowestReq string
+	minTime = time.Hour
+
+	for i, m := range metrics {
+		statusCol := color.New(color.FgHiGreen).SprintFunc()
+		if m.Error != nil || (m.StatusCode != 0 && m.StatusCode >= 400) {
+			statusCol = color.New(color.FgHiRed).SprintFunc()
+		}
+
+		if m.Protocol == "SOCKET" {
+			statusTxt := "OK"
+			if m.Error != nil { statusTxt = "ERR" }
+			fmt.Printf("  [%2d] %-8s %-20s %s\n", i+1, color.BlueString("SOCKET"), statusCol(statusTxt), m.Name)
+		} else {
+			totalHttp++
+			totalHttpTime += m.Duration
+			if m.Error != nil || m.StatusCode >= 400 { failedHttp++ } else { successHttp++ }
+			if m.Duration > maxTime { maxTime = m.Duration; slowestReq = m.Name }
+			if m.Duration < minTime && m.Duration > 0 { minTime = m.Duration }
+			statusTxt := m.StatusString
+			if m.Error != nil { statusTxt = "ERR" }
+			fmt.Printf("  [%2d] %-8s %-20s %-8s %s\n", i+1, "HTTP", statusCol(statusTxt), m.Duration.Round(time.Millisecond).String(), m.Name)
+		}
+	}
+
+	fmt.Println(strings.Repeat("-", 70))
+	if totalHttp > 0 {
+		avgTime := totalHttpTime / time.Duration(totalHttp)
+		fmt.Printf("  HTTP Requests : %d Total | %s | %s\n", totalHttp, color.GreenString("%d Success", successHttp), color.RedString("%d Failed", failedHttp))
+		fmt.Printf("  Avg Latency   : %s\n", color.CyanString(avgTime.Round(time.Millisecond).String()))
+		fmt.Printf("  Min Latency   : %s\n", minTime.Round(time.Millisecond).String())
+		fmt.Printf("  Max Latency   : %s (%s)\n", color.YellowString(maxTime.Round(time.Millisecond).String()), slowestReq)
+	}
+	fmt.Printf("  Total Run Time: %v\n", totalTime.Round(time.Millisecond))
+	fmt.Println(strings.Repeat("=", 70))
+}
+
+// printAggregatedSummary prints stats across multiple iterations.
+func printAggregatedSummary(allMetrics [][]runner.RequestMetric, totalTime time.Duration) {
+	fmt.Println("\n" + strings.Repeat("=", 70))
+	color.New(color.FgHiCyan, color.Bold).Println("  AGGREGATED SUMMARY")
+	fmt.Println(strings.Repeat("=", 70))
+
+	totalRuns := len(allMetrics)
+	var totalReqs, totalSuccess, totalFailed int
+	var totalLatency time.Duration
+
+	for _, runMetrics := range allMetrics {
+		for _, m := range runMetrics {
+			if m.Protocol == "HTTP" || m.Protocol == "" { 
+				totalReqs++
+				totalLatency += m.Duration
+				if m.Error != nil || m.StatusCode >= 400 {
+					totalFailed++
+				} else {
+					totalSuccess++
+				}
+			}
+		}
+	}
+
+	var avgLatency time.Duration
+	if totalReqs > 0 {
+		avgLatency = totalLatency / time.Duration(totalReqs)
+	}
+	
+	fmt.Printf("  Iterations    : %d\n", totalRuns)
+	fmt.Printf("  HTTP Requests : %d Total (%d per iteration)\n", totalReqs, totalReqs/totalRuns)
+	if totalReqs > 0 {
+		fmt.Printf("  Success Rate  : %.2f%% (%s / %s)\n", 
+			float64(totalSuccess)/float64(totalReqs)*100,
+			color.GreenString("%d", totalSuccess),
+			color.RedString("%d", totalFailed))
+	}
+	fmt.Printf("  Avg Latency   : %s\n", color.CyanString(avgLatency.Round(time.Millisecond).String()))
+	fmt.Printf("  Total Run Time: %v\n", totalTime.Round(time.Millisecond))
+	fmt.Println(strings.Repeat("=", 70))
 }

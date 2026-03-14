@@ -22,7 +22,6 @@ type CollectionRunner struct {
 	scriptRunner          scripting.ScriptRunner
 	clearCookiesPerRequest bool // if true, jar is cleared before each request
 	verboseMode           bool
-	metrics 			  []RequestMetric 
 }
 
 
