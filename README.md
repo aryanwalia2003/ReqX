@@ -37,8 +37,8 @@ reqx run collection.json -e dev.json
 # Performance Test: 10 iterations with aggregated summary
 reqx run collection.json -n 10
 
-# Targeted Run: Only requests containing "Auth"
-reqx run collection.json -f "Auth"
+  # 🔍 Target multiple specific requests by name
+  reqx run my-collection.json -f "Login" -f "Update Profile"
 
 # Verbose Mode: See full request/response headers and bodies
 reqx run collection.json -v

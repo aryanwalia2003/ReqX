@@ -19,7 +19,7 @@ import (
 func NewRunCmd() *cobra.Command {
 	var envFilePath string
 	var noCookies, clearCookies, verbose bool
-	var requestFilter string
+	var requestFilters []string
 	var iterations int // <-- NEW: Iterations flag variable
 
 	// NEW: Variables for Temporary Request Injection
@@ -45,8 +45,8 @@ cookie persistence, pre-request scripts, and test assertions.
   # Load Testing: Run 20 iterations and view aggregated stats
   reqx run my-collection.json -n 20
   
-  # Targeted Testing: Run only requests with "User" in the name
-  reqx run my-collection.json -f "User"
+  # Targeted Testing: Run only "Login" and "Profile" requests
+  reqx run my-collection.json -f "Login" -f "Profile"
   
   # Debugging: Verbose output showing full request and response bodies
   reqx run my-collection.json -v
@@ -124,19 +124,26 @@ cookie persistence, pre-request scripts, and test assertions.
 				}
 
 				// Filtering Logic
-				if requestFilter != "" {
+				if len(requestFilters) > 0 {
 					filtered := []collection.Request{}
 					for _, r := range coll.Requests {
-						if strings.Contains(strings.ToLower(r.Name), strings.ToLower(requestFilter)) {
+						matched := false
+						for _, f := range requestFilters {
+							if strings.Contains(strings.ToLower(r.Name), strings.ToLower(f)) {
+								matched = true
+								break
+							}
+						}
+						if matched {
 							filtered = append(filtered, r)
 						}
 					}
 					if len(filtered) == 0 {
-						color.Yellow("⚠ No requests found matching filter: %s", requestFilter)
+						color.Yellow("⚠ No requests found matching filters: %v", requestFilters)
 						continue // Skip this iteration if filter matches nothing
 					}
 					coll.Requests = filtered
-					color.Cyan("🔍 Filtered collection to %d request(s) matching '%s'\n", len(filtered), requestFilter)
+					color.Cyan("🔍 Filtered collection to %d request(s) matching %v\n", len(filtered), requestFilters)
 				}
 
 				// A fresh context for each iteration is crucial!
@@ -206,7 +213,7 @@ cookie persistence, pre-request scripts, and test assertions.
 	c.Flags().BoolVar(&noCookies, "no-cookies", false, "Disable cookie persistence for this run")
 	c.Flags().BoolVar(&clearCookies, "clear-cookies", false, "Clear cookie jar before each request")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output to see full request and response")
-	c.Flags().StringVarP(&requestFilter, "request", "f", "", "Only run requests matching this name (substring match)")
+	c.Flags().StringSliceVarP(&requestFilters, "request", "f", []string{}, "Only run requests matching these names (multiple flags or comma-separated supported)")
 
 	// Injection Flags
 	c.Flags().StringVar(&injIndex, "inject-index", "", "Position (1-based) to temporarily insert a new request")
