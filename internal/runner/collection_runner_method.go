@@ -37,9 +37,47 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			for k, v := range req.Headers {
 				headers[k] = cr.replaceVars(v, ctx)
 			}
-			cr.sioExecutor.Execute(urlStr, headers, req.Events)
-			cr.runScripts("test", req.Scripts, ctx, nil)
-			continue
+
+			// 1. Pehle saare events ko resolve karke slice mein daal lo
+			var resolvedEvents []collection.SocketIOEvent
+			for _, ev := range req.Events {
+				resolvedEvents = append(resolvedEvents, collection.SocketIOEvent{
+					Type:    ev.Type,
+					Name:    cr.replaceVars(ev.Name, ctx),
+					Payload: cr.replaceVars(ev.Payload, ctx),
+				})
+			}
+
+			// 2. Ab check karo ki Async chalana hai ya Sync
+			if req.Async {
+				fmt.Printf("Starting Background Socket.IO connection for '%s'...\n", req.Name)
+
+				// Background mein execute karo
+				go func(name, url string, hdrs map[string]string, events []collection.SocketIOEvent) {
+					err := cr.sioExecutor.Execute(url, hdrs, events)
+					if err != nil {
+						color.Red("\n[BACKGROUND ERROR] Socket.IO '%s' failed: %v\n> ", name, err)
+					} else {
+						color.Green("\n[BACKGROUND SUCCESS] Socket.IO '%s' completed.\n> ", name)
+					}
+				}(req.Name, urlStr, headers, resolvedEvents)
+
+				// Async hai, isliye turant agle request par badh jao (bina block kiye)
+				cr.runScripts("test", req.Scripts, ctx, nil)
+				continue
+
+			} else {
+				// 3. Agar Async nahi hai, toh normal Synchronous execute karo (block the terminal)
+				err := cr.sioExecutor.Execute(urlStr, headers, resolvedEvents)
+				if err != nil {
+					fmt.Printf("Socket.IO Request %s failed: %v\n", req.Name, err)
+				} else {
+					fmt.Printf("Socket.IO Request %s successful\n", req.Name)
+				}
+				
+				cr.runScripts("test", req.Scripts, ctx, nil)
+				continue
+			}
 		}
 
 		var bodyReader io.Reader

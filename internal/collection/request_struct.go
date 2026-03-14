@@ -6,6 +6,7 @@ type Request struct {
 	Method   string            `json:"method"`
 	URL      string            `json:"url"`
 	Protocol string            `json:"protocol,omitempty"` // "HTTP", "WS", "SOCKETIO"
+	Async    bool              `json:"async,omitempty"`
 	Headers  map[string]string `json:"headers,omitempty"`
 	Body     string            `json:"body,omitempty"`
 	Auth     *Auth             `json:"auth,omitempty"`
