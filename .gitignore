@@ -27,6 +27,11 @@ go.work.sum
 *.swp
 *.~
 
+# ReqX specific build artifacts
+dist/
+reqx-windows.zip
+reqx.exe
+
 # Postman CLI specific test files
 test-env.json
 test-collection.json

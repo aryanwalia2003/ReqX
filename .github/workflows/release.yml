@@ -15,17 +15,19 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.0'
+          go-version: '1.24'
 
       - name: Build Binary
         run: |
           go build -o reqx.exe main.go
 
       - name: Package Release
+        shell: pwsh
         run: |
-          mkdir dist
-          cp reqx.exe dist/
-          cp install.ps1 dist/
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          New-Item -ItemType Directory -Path dist
+          Copy-Item reqx.exe -Destination dist/
+          Copy-Item install.ps1 -Destination dist/
           7z a reqx-windows.zip ./dist/*
 
       - name: Create Release
