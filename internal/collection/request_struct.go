@@ -11,6 +11,7 @@ type Request struct {
 	Body     string            `json:"body,omitempty"`
 	Auth     *Auth             `json:"auth,omitempty"`
 	Events   []SocketIOEvent   `json:"events,omitempty"`
+	WSEvents []WebSocketEvent  `json:"ws_events,omitempty"`
 	Scripts  []Script          `json:"scripts,omitempty"`
 }
 

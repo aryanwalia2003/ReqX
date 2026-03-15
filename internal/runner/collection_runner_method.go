@@ -36,8 +36,10 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 	
 	// This defer is for the async socket kill switch for this single run
 	defer func() {
+		color.Cyan("\nCollection run finished. Waiting for background connections to close gracefully...\n")
 		close(stopAsyncSockets)
-		time.Sleep(500 * time.Millisecond)
+		cr.wg.Wait()
+		color.Green("All connections closed cleanly.\n")
 	}()
 
 	for _, req := range coll.Requests {
@@ -45,6 +47,57 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 
 		cr.runScripts("prerequest", req.Scripts, ctx, nil)
 		urlStr := cr.replaceVars(req.URL, ctx)
+
+		if strings.ToUpper(req.Protocol) == "WS" {
+			headers := make(map[string]string)
+			for k, v := range req.Headers {
+				headers[k] = cr.replaceVars(v, ctx)
+			}
+
+			var resolvedEvents []collection.WebSocketEvent
+			for _, ev := range req.WSEvents {
+				resolvedEvents = append(resolvedEvents, collection.WebSocketEvent{
+					Type: ev.Type, Payload: cr.replaceVars(ev.Payload, ctx),
+				})
+			}
+
+			startWs := time.Now()
+			if req.Async {
+				fmt.Printf("Starting Background WebSocket connection for '%s'...\n", req.Name)
+				readyChan := make(chan error, 1)
+				cr.wg.Add(1)
+				go func(name, url string, hdrs map[string]string, events []collection.WebSocketEvent) {
+					defer cr.wg.Done()
+					err := cr.weExecutor.Execute(url, hdrs, events, readyChan, stopAsyncSockets)
+					if err != nil {
+						color.Red("\n[BACKGROUND ERROR] WebSocket '%s' failed: %v\n", name, err)
+					}
+				}(req.Name, urlStr, headers, resolvedEvents)
+
+				color.Cyan("⏳ Waiting for WebSocket to establish connection...\n")
+				err := <-readyChan
+				metrics = append(metrics, RequestMetric{
+					Name: req.Name, Protocol: "WS", Duration: time.Since(startWs), StatusString: "ASYNC", Error: err,
+				})
+				if err != nil {
+					color.Yellow("⚠ Background WebSocket failed to connect: %v. Continuing...\n", err)
+				} else {
+					color.Green("✔ Background WebSocket is ready and listening!\n")
+				}
+				cr.runScripts("test", req.Scripts, ctx, nil)
+				continue
+			} else {
+				err := cr.weExecutor.Execute(urlStr, headers, resolvedEvents, nil, nil)
+				metrics = append(metrics, RequestMetric{
+					Name: req.Name, Protocol: "WS", Duration: time.Since(startWs), StatusString: "SYNC", Error: err,
+				})
+				if err != nil {
+					fmt.Printf("WebSocket Request %s failed: %v\n", req.Name, err)
+				}
+				cr.runScripts("test", req.Scripts, ctx, nil)
+				continue
+			}
+		}
 
 		if strings.ToUpper(req.Protocol) == "SOCKETIO" {
 			headers := make(map[string]string)
@@ -61,7 +114,9 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			if req.Async {
 				fmt.Printf("Starting Background Socket.IO connection for '%s'...\n", req.Name)
 				readyChan := make(chan error, 1)
+				cr.wg.Add(1)
 				go func(name, url string, hdrs map[string]string, events []collection.SocketIOEvent) {
+					defer cr.wg.Done()
 					err := cr.sioExecutor.Execute(url, hdrs, events, readyChan, stopAsyncSockets)
 					if err != nil {
 						color.Red("\n[BACKGROUND ERROR] Socket.IO '%s' failed: %v\n", name, err)

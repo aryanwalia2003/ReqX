@@ -84,7 +84,7 @@ Perfect for:
 
 			// 4. Execute using the standard Collection Runner
 			exec := http_executor.NewDefaultExecutor()
-			engine := runner.NewCollectionRunner(exec, nil, nil)
+			engine := runner.NewCollectionRunner(exec, nil, nil, nil)
 
 			if verbose {
 				engine.SetVerbose(true)

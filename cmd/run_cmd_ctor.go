@@ -169,7 +169,7 @@ cookie persistence, pre-request scripts, and test assertions.
 				}
 
 				// Run Collection for this iteration
-				engine := runner.NewCollectionRunner(exec, nil, nil)
+				engine := runner.NewCollectionRunner(exec, nil, nil, nil)
 				if clearCookies {
 					engine.SetClearCookiesPerRequest(true)
 				}

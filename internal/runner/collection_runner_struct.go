@@ -4,6 +4,8 @@ import (
 	"reqx/internal/http_executor"
 	"reqx/internal/scripting"
 	"reqx/internal/socketio_executor"
+	"reqx/internal/websocket_executor"
+	"sync"
 	"time"
 )
 
@@ -19,9 +21,11 @@ type RequestMetric struct{
 type CollectionRunner struct {
 	executor              *http_executor.DefaultExecutor
 	sioExecutor           socketio_executor.SocketIOExecutor
+	weExecutor            websocket_executor.WebSocketExecutor
 	scriptRunner          scripting.ScriptRunner
 	clearCookiesPerRequest bool // if true, jar is cleared before each request
 	verboseMode           bool
+	wg                    *sync.WaitGroup
 }
 
 
