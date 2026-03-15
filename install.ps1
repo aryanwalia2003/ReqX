@@ -1,4 +1,4 @@
-# ReqX Installer v1.1
+# ReqX Installer v1.2
 $ErrorActionPreference = "Stop"
 
 Write-Host "`n============================================================" -ForegroundColor Cyan
