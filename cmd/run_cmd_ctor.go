@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ func NewRunCmd() *cobra.Command {
 	var noCookies, clearCookies, verbose bool
 	var requestFilters []string
 	var iterations int // <-- NEW: Iterations flag variable
+	var workers int    // <-- NEW: Workers flag variable
 
 	// NEW: Variables for Temporary Request Injection
 	var injIndex string
@@ -68,6 +70,60 @@ cookie persistence, pre-request scripts, and test assertions.
 			allMetrics := make([][]runner.RequestMetric, 0, iterations)
 			totalStartTime := time.Now()
 
+			// 1. Load Collection from File (ONCE for all workers/iterations)
+			collBytes, err := storage.ReadJSONFile(collectionPath)
+			if err != nil {
+				return errs.Wrap(err, errs.KindInvalidInput, "could not read collection file")
+			}
+
+			coll, err := storage.ParseCollection(collBytes)
+			if err != nil {
+				return errs.Wrap(err, errs.KindInvalidInput, "could not parse collection JSON")
+			}
+
+			// =========================================================
+			// ▼▼▼ NEW: PARALLEL DISPATCH (LOAD TESTING) ▼▼▼
+			// =========================================================
+			if workers > 1 {
+				cfg := runner.WorkerConfig{
+					Coll:         coll,
+					BaseEnv:      nil, // set below if env file provided
+					NoCookies:    noCookies,
+					ClearCookies: clearCookies,
+					Verbose:      verbose,
+				}
+
+				if envFilePath != "" {
+					envBytes, err := storage.ReadJSONFile(envFilePath)
+					if err != nil {
+						return errs.Wrap(err, errs.KindInvalidInput, "could not read environment file")
+					}
+					env, err := storage.ParseEnvironment(envBytes)
+					if err != nil {
+						return errs.Wrap(err, errs.KindInvalidInput, "could not parse environment JSON")
+					}
+					cfg.BaseEnv = env
+				}
+
+				pool := runner.NewWorkerPool(workers)
+				color.Cyan("🚀 Starting load test: %d iterations across %d workers\n", iterations, workers)
+				results := pool.Run(cfg, iterations)
+
+				// Flatten results into allMetrics (order by iteration index)
+				sort.Slice(results, func(i, j int) bool {
+					return results[i].IterationIndex < results[j].IterationIndex
+				})
+				for _, r := range results {
+					if r.Err != nil {
+						color.Red("Iteration %d failed: %v\n", r.IterationIndex, r.Err)
+					}
+					allMetrics = append(allMetrics, r.Metrics)
+				}
+
+				printAggregatedSummary(allMetrics, time.Since(totalStartTime))
+				return nil
+			}
+
 			// =========================================================
 			// ▼▼▼ NEW: ITERATION LOOP STARTS HERE (OUTERMOST) ▼▼▼
 			// =========================================================
@@ -80,17 +136,6 @@ cookie persistence, pre-request scripts, and test assertions.
 				
 				// All logic below this is now inside the iteration loop,
 				// ensuring a clean state for every run.
-
-				// 1. Load Collection from File
-				collBytes, err := storage.ReadJSONFile(collectionPath)
-				if err != nil {
-					return errs.Wrap(err, errs.KindInvalidInput, "could not read collection file")
-				}
-
-				coll, err := storage.ParseCollection(collBytes)
-				if err != nil {
-					return errs.Wrap(err, errs.KindInvalidInput, "could not parse collection JSON")
-				}
 
 				// Injection Logic
 				if injIndex != "" && injName != "" && injURL != "" {
@@ -209,6 +254,7 @@ cookie persistence, pre-request scripts, and test assertions.
 
 	// Standard Flags
 	c.Flags().IntVarP(&iterations, "iterations", "n", 1, "Number of times to run the collection") // <-- NEW FLAG
+	c.Flags().IntVarP(&workers, "workers", "c", 1, "Number of parallel workers (virtual users)")
 	c.Flags().StringVarP(&envFilePath, "env", "e", "", "Path to the environment JSON file")
 	c.Flags().BoolVar(&noCookies, "no-cookies", false, "Disable cookie persistence for this run")
 	c.Flags().BoolVar(&clearCookies, "clear-cookies", false, "Clear cookie jar before each request")
