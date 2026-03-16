@@ -87,7 +87,7 @@ Perfect for:
 			engine := runner.NewCollectionRunner(exec, nil, nil, nil)
 
 			if verbose {
-				engine.SetVerbose(true)
+				engine.SetVerbosity(runner.VerbosityFull)
 			}
 			_, err := engine.Run(dummyColl, ctx)
 			if err != nil {

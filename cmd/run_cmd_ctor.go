@@ -13,6 +13,7 @@ import (
 	"reqx/internal/collection"
 	"reqx/internal/errs"
 	"reqx/internal/http_executor"
+	"reqx/internal/metrics"
 	"reqx/internal/runner"
 	"reqx/internal/storage"
 )
@@ -20,9 +21,11 @@ import (
 func NewRunCmd() *cobra.Command {
 	var envFilePath string
 	var noCookies, clearCookies, verbose bool
+	var quiet bool
 	var requestFilters []string
 	var iterations int // <-- NEW: Iterations flag variable
 	var workers int    // <-- NEW: Workers flag variable
+	var exportPath string
 
 	// NEW: Variables for Temporary Request Injection
 	var injIndex string
@@ -84,13 +87,20 @@ cookie persistence, pre-request scripts, and test assertions.
 			// =========================================================
 			// ▼▼▼ NEW: PARALLEL DISPATCH (LOAD TESTING) ▼▼▼
 			// =========================================================
+			verbosityLevel := runner.VerbosityNormal
+			if quiet {
+				verbosityLevel = runner.VerbosityQuiet
+			} else if verbose {
+				verbosityLevel = runner.VerbosityFull
+			}
+
 			if workers > 1 {
 				cfg := runner.WorkerConfig{
 					Coll:         coll,
 					BaseEnv:      nil, // set below if env file provided
 					NoCookies:    noCookies,
 					ClearCookies: clearCookies,
-					Verbose:      verbose,
+					Verbosity:    verbosityLevel,
 				}
 
 				if envFilePath != "" {
@@ -120,7 +130,15 @@ cookie persistence, pre-request scripts, and test assertions.
 					allMetrics = append(allMetrics, r.Metrics)
 				}
 
-				printAggregatedSummary(allMetrics, time.Since(totalStartTime))
+				report := metrics.Analyze(allMetrics, time.Since(totalStartTime))
+				metrics.PrintReport(report)
+				if exportPath != "" {
+					if err := metrics.ExportJSON(allMetrics, exportPath); err != nil {
+						color.Red("⚠ Export failed: %v\n", err)
+					} else {
+						color.Cyan("📄 Results exported to: %s\n", exportPath)
+					}
+				}
 				return nil
 			}
 
@@ -215,11 +233,9 @@ cookie persistence, pre-request scripts, and test assertions.
 
 				// Run Collection for this iteration
 				engine := runner.NewCollectionRunner(exec, nil, nil, nil)
+				engine.SetVerbosity(verbosityLevel)
 				if clearCookies {
 					engine.SetClearCookiesPerRequest(true)
-				}
-				if verbose {
-					engine.SetVerbose(true)
 				}
 
 				runMetrics, err := engine.Run(coll, ctx)
@@ -242,10 +258,11 @@ cookie persistence, pre-request scripts, and test assertions.
 			// NEW: Print the Final Aggregated Summary
 			// ==========================================
 			if iterations > 1 {
-				printAggregatedSummary(allMetrics, time.Since(totalStartTime))
+				report := metrics.Analyze(allMetrics, time.Since(totalStartTime))
+				metrics.PrintReport(report)
 			} else if len(allMetrics) > 0 {
-				// If only one iteration, print the simple summary
-				printSimpleSummary(allMetrics[0], time.Since(totalStartTime))
+				report := metrics.Analyze(allMetrics, time.Since(totalStartTime))
+				metrics.PrintReport(report)
 			}
 
 			return nil
@@ -260,6 +277,10 @@ cookie persistence, pre-request scripts, and test assertions.
 	c.Flags().BoolVar(&clearCookies, "clear-cookies", false, "Clear cookie jar before each request")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output to see full request and response")
 	c.Flags().StringSliceVarP(&requestFilters, "request", "f", []string{}, "Only run requests matching these names (multiple flags or comma-separated supported)")
+	c.Flags().BoolVarP(&quiet, "quiet", "q", false,
+		"Suppress per-request logs; show real-time progress bar instead")
+	c.Flags().StringVar(&exportPath, "export", "",
+		"Path to export raw request metrics as newline-delimited JSON (e.g. results.json)")
 
 	// Injection Flags
 	c.Flags().StringVar(&injIndex, "inject-index", "", "Position (1-based) to temporarily insert a new request")
@@ -270,95 +291,4 @@ cookie persistence, pre-request scripts, and test assertions.
 	c.Flags().StringSliceVar(&injHeaders, "inject-header", []string{}, "Header for temporary request (e.g., 'Key: Value')")
 
 	return c
-}
-
-// =========================================================
-// ▼▼▼ NEW HELPER FUNCTIONS ▼▼▼
-// =========================================================
-
-// printSimpleSummary prints a summary for a single run.
-func printSimpleSummary(metrics []runner.RequestMetric, totalTime time.Duration) {
-	fmt.Println("\n" + strings.Repeat("=", 70))
-	color.New(color.FgHiCyan, color.Bold).Println("  EXECUTION SUMMARY")
-	fmt.Println(strings.Repeat("=", 70))
-
-	var totalHttp, successHttp, failedHttp int
-	var maxTime, minTime, totalHttpTime time.Duration
-	var slowestReq string
-	minTime = time.Hour
-
-	for i, m := range metrics {
-		statusCol := color.New(color.FgHiGreen).SprintFunc()
-		if m.Error != nil || (m.StatusCode != 0 && m.StatusCode >= 400) {
-			statusCol = color.New(color.FgHiRed).SprintFunc()
-		}
-
-		if m.Protocol == "SOCKET" {
-			statusTxt := "OK"
-			if m.Error != nil { statusTxt = "ERR" }
-			fmt.Printf("  [%2d] %-8s %-20s %s\n", i+1, color.BlueString("SOCKET"), statusCol(statusTxt), m.Name)
-		} else {
-			totalHttp++
-			totalHttpTime += m.Duration
-			if m.Error != nil || m.StatusCode >= 400 { failedHttp++ } else { successHttp++ }
-			if m.Duration > maxTime { maxTime = m.Duration; slowestReq = m.Name }
-			if m.Duration < minTime && m.Duration > 0 { minTime = m.Duration }
-			statusTxt := m.StatusString
-			if m.Error != nil { statusTxt = "ERR" }
-			fmt.Printf("  [%2d] %-8s %-20s %-8s %s\n", i+1, "HTTP", statusCol(statusTxt), m.Duration.Round(time.Millisecond).String(), m.Name)
-		}
-	}
-
-	fmt.Println(strings.Repeat("-", 70))
-	if totalHttp > 0 {
-		avgTime := totalHttpTime / time.Duration(totalHttp)
-		fmt.Printf("  HTTP Requests : %d Total | %s | %s\n", totalHttp, color.GreenString("%d Success", successHttp), color.RedString("%d Failed", failedHttp))
-		fmt.Printf("  Avg Latency   : %s\n", color.CyanString(avgTime.Round(time.Millisecond).String()))
-		fmt.Printf("  Min Latency   : %s\n", minTime.Round(time.Millisecond).String())
-		fmt.Printf("  Max Latency   : %s (%s)\n", color.YellowString(maxTime.Round(time.Millisecond).String()), slowestReq)
-	}
-	fmt.Printf("  Total Run Time: %v\n", totalTime.Round(time.Millisecond))
-	fmt.Println(strings.Repeat("=", 70))
-}
-
-// printAggregatedSummary prints stats across multiple iterations.
-func printAggregatedSummary(allMetrics [][]runner.RequestMetric, totalTime time.Duration) {
-	fmt.Println("\n" + strings.Repeat("=", 70))
-	color.New(color.FgHiCyan, color.Bold).Println("  AGGREGATED SUMMARY")
-	fmt.Println(strings.Repeat("=", 70))
-
-	totalRuns := len(allMetrics)
-	var totalReqs, totalSuccess, totalFailed int
-	var totalLatency time.Duration
-
-	for _, runMetrics := range allMetrics {
-		for _, m := range runMetrics {
-			if m.Protocol == "HTTP" || m.Protocol == "" { 
-				totalReqs++
-				totalLatency += m.Duration
-				if m.Error != nil || m.StatusCode >= 400 {
-					totalFailed++
-				} else {
-					totalSuccess++
-				}
-			}
-		}
-	}
-
-	var avgLatency time.Duration
-	if totalReqs > 0 {
-		avgLatency = totalLatency / time.Duration(totalReqs)
-	}
-	
-	fmt.Printf("  Iterations    : %d\n", totalRuns)
-	fmt.Printf("  HTTP Requests : %d Total (%d per iteration)\n", totalReqs, totalReqs/totalRuns)
-	if totalReqs > 0 {
-		fmt.Printf("  Success Rate  : %.2f%% (%s / %s)\n", 
-			float64(totalSuccess)/float64(totalReqs)*100,
-			color.GreenString("%d", totalSuccess),
-			color.RedString("%d", totalFailed))
-	}
-	fmt.Printf("  Avg Latency   : %s\n", color.CyanString(avgLatency.Round(time.Millisecond).String()))
-	fmt.Printf("  Total Run Time: %v\n", totalTime.Round(time.Millisecond))
-	fmt.Println(strings.Repeat("=", 70))
 }

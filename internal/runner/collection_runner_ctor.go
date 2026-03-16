@@ -25,15 +25,26 @@ func NewCollectionRunner(exec *http_executor.DefaultExecutor, sio socketio_execu
 	}
 
 	return &CollectionRunner{
-		executor:    exec,
-		sioExecutor: sio,
-		weExecutor:  we,
+		executor:     exec,
+		sioExecutor:  sio,
+		weExecutor:   we,
 		scriptRunner: script,
+		verbosity:    VerbosityNormal,
 		wg:          &sync.WaitGroup{},
 	}
 }
 
-func (cr *CollectionRunner) SetVerbose(v bool){
-	cr.verboseMode = v
+// SetVerbosity controls how much per-request output the runner emits.
+func (cr *CollectionRunner) SetVerbosity(v int) {
+	cr.verbosity = v
+}
+
+// SetVerbose is kept for backward compatibility; it maps to VerbosityFull.
+func (cr *CollectionRunner) SetVerbose(v bool) {
+	if v {
+		cr.verbosity = VerbosityFull
+	} else if cr.verbosity < VerbosityNormal {
+		cr.verbosity = VerbosityNormal
+	}
 }
 

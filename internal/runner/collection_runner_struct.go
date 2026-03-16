@@ -16,6 +16,8 @@ type RequestMetric struct{
 	Duration time.Duration
 	StatusString string
 	Error error
+	ErrorMsg     string    
+	WorkerID     int       
 }
 // CollectionRunner handles executing a full collection of requests.
 type CollectionRunner struct {
@@ -24,7 +26,7 @@ type CollectionRunner struct {
 	weExecutor            websocket_executor.WebSocketExecutor
 	scriptRunner          scripting.ScriptRunner
 	clearCookiesPerRequest bool // if true, jar is cleared before each request
-	verboseMode           bool
+	verbosity             int
 	wg                    *sync.WaitGroup
 }
 

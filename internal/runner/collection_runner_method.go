@@ -36,14 +36,20 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 	
 	// This defer is for the async socket kill switch for this single run
 	defer func() {
-		color.Cyan("\nCollection run finished. Waiting for background connections to close gracefully...\n")
+		if cr.verbosity >= VerbosityNormal {
+			color.Cyan("\nCollection run finished. Waiting for background connections...\n")
+		}
 		close(stopAsyncSockets)
 		cr.wg.Wait()
-		color.Green("All connections closed cleanly.\n")
+		if cr.verbosity >= VerbosityNormal {
+			color.Green("All connections closed cleanly.\n")
+		}
 	}()
 
 	for _, req := range coll.Requests {
-		fmt.Printf("\n▶ Running request: %s\n", req.Name)
+		if cr.verbosity >= VerbosityNormal {
+			fmt.Printf("\n▶ Running request: %s\n", req.Name)
+		}
 
 		cr.runScripts("prerequest", req.Scripts, ctx, nil)
 		urlStr := cr.replaceVars(req.URL, ctx)
@@ -162,7 +168,7 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			httpReq.Header.Set(k, cr.replaceVars(v, ctx))
 		}
 		http_executor.ApplyAuth(httpReq, cr.resolveAuth(req.Auth, coll.Auth, ctx))
-		if cr.verboseMode {
+		if cr.verbosity >= VerbosityFull {
 			verboseColor.Println("-------------------- REQUEST --------------------")
 			dump, _ := httputil.DumpRequestOut(httpReq, true)
 			scanner := bufio.NewScanner(strings.NewReader(string(dump)))
@@ -194,15 +200,22 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		totalTime := time.Since(t0)
 		if err != nil {
 			fmt.Printf("Request Failed: %v\n", err)
-			metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "HTTP", Duration: totalTime, Error: err})
+			metrics = append(metrics, RequestMetric{
+				Name: req.Name, Protocol: "HTTP",
+				Duration: totalTime, Error: err, ErrorMsg: err.Error(),
+			})
 			continue
 		}
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		metrics = append(metrics, RequestMetric{
+		m := RequestMetric{
 			Name: req.Name, Protocol: "HTTP", StatusCode: resp.StatusCode, StatusString: resp.Status, Duration: totalTime,
-		})
+		}
+		if resp.StatusCode >= 400 {
+			m.ErrorMsg = resp.Status
+		}
+		metrics = append(metrics, m)
 
 		var dnsTime, tcpTime, tlsTime, ttfbTime, transferTime time.Duration
 		if !dnsDone.IsZero() { dnsTime = dnsDone.Sub(dnsStart) }
@@ -213,7 +226,7 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			transferTime = time.Since(resStart)
 		}
 
-		if cr.verboseMode {
+		if cr.verbosity >= VerbosityFull {
 			verboseColor.Println("-------------------- RESPONSE -------------------")
 			verboseColor.Printf("< %s %s\n", resp.Proto, resp.Status)
 			for key, values := range resp.Header {
@@ -248,7 +261,9 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		if resp.StatusCode >= 400 {
 			statusColor = color.New(color.FgHiRed).SprintfFunc()
 		}
-		fmt.Printf("Status: %s  |  Time: %v\n", statusColor(resp.Status), roundMs(totalTime))
+		if cr.verbosity >= VerbosityNormal {
+			fmt.Printf("Status: %s  |  Time: %v\n", statusColor(resp.Status), roundMs(totalTime))
+		}
 		
 		scriptResp := &scripting.ResponseAPI{
 			BodyString: string(bodyBytes),
