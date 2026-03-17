@@ -15,6 +15,7 @@ import (
 	"reqx/internal/errs"
 	"reqx/internal/http_executor"
 	"reqx/internal/metrics"
+	"reqx/internal/personas"
 	"reqx/internal/progress"
 	"reqx/internal/runner"
 	"reqx/internal/storage"
@@ -31,6 +32,7 @@ func NewRunCmd() *cobra.Command {
 	var duration time.Duration
 	var rps float64
 	var stages string
+	var personasPath string
 
 	// NEW: Variables for Temporary Request Injection
 	var injIndex string
@@ -93,6 +95,17 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 				return errs.Wrap(err, errs.KindInvalidInput, "could not parse collection JSON")
 			}
 
+			var loadedPersonas []personas.Persona
+			if personasPath != "" {
+				loadedPersonas, err = personas.LoadCSV(personasPath)
+				if err != nil {
+					return err
+				}
+				if len(loadedPersonas) == 0 {
+					color.Yellow("⚠ Personas CSV had no rows; continuing without personas.\n")
+				}
+			}
+
 			verbosityLevel := runner.VerbosityNormal
 			if quiet {
 				verbosityLevel = runner.VerbosityQuiet
@@ -132,6 +145,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 					NoCookies:    noCookies,
 					ClearCookies: clearCookies,
 					Verbosity:    verbosityLevel,
+					Personas:     loadedPersonas,
 					Stages:       parsedStages,
 					Duration:     duration,
 					MaxWorkers:   workers, // -c still sets the fixed concurrency in duration mode
@@ -182,6 +196,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 					NoCookies:    noCookies,
 					ClearCookies: clearCookies,
 					Verbosity:    verbosityLevel,
+					Personas:     loadedPersonas,
 				}
 
 				if envFilePath != "" {
@@ -305,6 +320,15 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 					}
 					ctx.SetEnvironment(env)
 				}
+				if len(loadedPersonas) > 0 {
+					// Single-worker mode: keep the same persona for all iterations.
+					for k, v := range loadedPersonas[0] {
+						if k == "" {
+							continue
+						}
+						ctx.Environment.Variables["persona."+k] = v
+					}
+				}
 
 				// Build executor
 				exec := http_executor.NewDefaultExecutor()
@@ -368,6 +392,8 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 		"Max requests per second to inject (0 = unlimited). Works with -d or --stages.")
 	c.Flags().StringVar(&stages, "stages", "",
 		`Ramp plan as "<dur>:<workers>" segments, e.g. "10s:5,30s:20,10s:0"`)
+	c.Flags().StringVar(&personasPath, "personas", "",
+		"CSV file of personas to inject as {{persona.<col>}} (stable per worker)")
 
 	// Injection Flags
 	c.Flags().StringVar(&injIndex, "inject-index", "", "Position (1-based) to temporarily insert a new request")

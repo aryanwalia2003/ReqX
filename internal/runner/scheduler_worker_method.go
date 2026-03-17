@@ -42,6 +42,10 @@ func (s *Scheduler) executeOne(ctx context.Context, workerID int) ([]RequestMetr
 	if s.cfg.BaseEnv != nil {
 		rtCtx.SetEnvironment(s.cfg.BaseEnv.Clone())
 	}
+	if len(s.cfg.Personas) > 0 {
+		p := s.cfg.Personas[(workerID-1)%len(s.cfg.Personas)]
+		applyPersona(rtCtx, p)
+	}
 
 	exec := http_executor.NewDefaultExecutor()
 	if s.cfg.NoCookies {

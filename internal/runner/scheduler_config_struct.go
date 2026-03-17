@@ -3,6 +3,7 @@ package runner
 import (
 	"reqx/internal/collection"
 	"reqx/internal/environment"
+	"reqx/internal/personas"
 	"time"
 )
 
@@ -19,6 +20,7 @@ type SchedulerConfig struct {
 	NoCookies   bool
 	ClearCookies bool
 	Verbosity   int
+	Personas    []personas.Persona
 
 	
 	Stages     []Stage       // ramp plan; mutually exclusive with MaxWorkers+Duration

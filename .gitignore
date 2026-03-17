@@ -39,3 +39,6 @@ test-socketio.json
 *.json
 
 .agents
+
+behavioral-workflow-proposal.md
+personas-guide.md

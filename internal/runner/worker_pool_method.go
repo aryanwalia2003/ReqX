@@ -4,6 +4,7 @@ import (
 	"reqx/internal/collection"
 	"reqx/internal/environment"
 	"reqx/internal/http_executor"
+	"reqx/internal/personas"
 	"reqx/internal/progress"
 	"reqx/internal/scripting"
 	"sync"
@@ -16,6 +17,7 @@ type WorkerConfig struct {
 	NoCookies    bool
 	ClearCookies bool
 	Verbosity    int // VerbosityQuiet suppresses per-request logs and shows progress bar
+	Personas     []personas.Persona
 }
 
 // Run distributes totalIterations jobs across the pool and returns all results.
@@ -79,6 +81,10 @@ func executeIteration(cfg WorkerConfig, workerID int) ([]RequestMetric, error) {
 	ctx := NewRuntimeContext()
 	if cfg.BaseEnv != nil {
 		ctx.SetEnvironment(cfg.BaseEnv.Clone())
+	}
+	if len(cfg.Personas) > 0 {
+		p := cfg.Personas[(workerID-1)%len(cfg.Personas)]
+		applyPersona(ctx, p)
 	}
 
 	exec := http_executor.NewDefaultExecutor()
