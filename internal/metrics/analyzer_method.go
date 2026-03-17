@@ -12,7 +12,7 @@ func Analyze(allMetrics [][]runner.RequestMetric, totalDuration time.Duration) R
 	order := []string{}
 	byName := map[string]*RequestStat{}
 
-	var globalDurations []time.Duration
+	globalHistogram := newHistogram()
 	var totalSuccess, totalFailures int
 
 	for _, iterMetrics := range allMetrics {
@@ -22,7 +22,7 @@ func Analyze(allMetrics [][]runner.RequestMetric, totalDuration time.Duration) R
 			}
 			stat, exists := byName[m.Name]
 			if !exists {
-				stat = &RequestStat{Name: m.Name}
+				stat = &RequestStat{Name: m.Name, Histogram: newHistogram()}
 				byName[m.Name] = stat
 				order = append(order, m.Name)
 			}
@@ -37,10 +37,8 @@ func Analyze(allMetrics [][]runner.RequestMetric, totalDuration time.Duration) R
 				stat.Successes++
 				totalSuccess++
 			}
-			if m.Duration > 0 {
-				stat.Durations = append(stat.Durations, m.Duration)
-				globalDurations = append(globalDurations, m.Duration)
-			}
+			recordDurationMs(stat.Histogram, m.Duration)
+			recordDurationMs(globalHistogram, m.Duration)
 		}
 	}
 
@@ -48,18 +46,15 @@ func Analyze(allMetrics [][]runner.RequestMetric, totalDuration time.Duration) R
 	perRequest := make([]RequestStat, 0, len(order))
 	for _, name := range order {
 		s := byName[name]
-		sorted := sortDurations(s.Durations)
-		s.P50 = percentile(sorted, 0.50)
-		s.P90 = percentile(sorted, 0.90)
-		s.P95 = percentile(sorted, 0.95)
-		s.P99 = percentile(sorted, 0.99)
-		s.AvgDuration = avg(sorted)
-		s.Durations = sorted
+		s.P50 = durFromQuantileMs(s.Histogram, 50)
+		s.P90 = durFromQuantileMs(s.Histogram, 90)
+		s.P95 = durFromQuantileMs(s.Histogram, 95)
+		s.P99 = durFromQuantileMs(s.Histogram, 99)
+		s.AvgDuration = durFromMeanMs(s.Histogram)
 		perRequest = append(perRequest, *s)
 	}
 
 	// Global percentiles
-	allSorted := sortDurations(globalDurations)
 	totalReqs := totalSuccess + totalFailures
 	var successRate float64
 	if totalReqs > 0 {
@@ -75,26 +70,15 @@ func Analyze(allMetrics [][]runner.RequestMetric, totalDuration time.Duration) R
 		TotalSuccess:  totalSuccess,
 		TotalFailures: totalFailures,
 		SuccessRate:   successRate,
-		AvgLatency:    avg(allSorted),
-		P50:           percentile(allSorted, 0.50),
-		P90:           percentile(allSorted, 0.90),
-		P95:           percentile(allSorted, 0.95),
-		P99:           percentile(allSorted, 0.99),
+		AvgLatency:    durFromMeanMs(globalHistogram),
+		P50:           durFromQuantileMs(globalHistogram, 50),
+		P90:           durFromQuantileMs(globalHistogram, 90),
+		P95:           durFromQuantileMs(globalHistogram, 95),
+		P99:           durFromQuantileMs(globalHistogram, 99),
 		RPS:           rps,
 		TotalDuration: totalDuration,
 		PerRequest:    perRequest,
 	}
-}
-
-func avg(sorted []time.Duration) time.Duration {
-	if len(sorted) == 0 {
-		return 0
-	}
-	var sum time.Duration
-	for _, d := range sorted {
-		sum += d
-	}
-	return sum / time.Duration(len(sorted))
 }
 
 func errorMessage(m runner.RequestMetric) string {

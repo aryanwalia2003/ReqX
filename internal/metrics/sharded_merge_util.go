@@ -1,32 +1,38 @@
 package metrics
 
-import "time"
+import (
+	"time"
+
+	"github.com/HdrHistogram/hdrhistogram-go"
+)
 
 type mergedStats struct {
 	order           []string
 	byName          map[string]*RequestStat
-	globalDurations []time.Duration
+	globalHistogram *hdrhistogram.Histogram
 	totalSuccess    int
 	totalFailures   int
 }
 
 func mergeShardResults(results []shardResult, order []string) mergedStats {
 	byName := make(map[string]*RequestStat, len(order))
-	var globalDurations []time.Duration
+	globalHistogram := newHistogram()
 	var totalSuccess, totalFailures int
 
 	for i := range results {
 		r := results[i]
 		totalSuccess += r.totalSuccess
 		totalFailures += r.totalFailures
-		globalDurations = append(globalDurations, r.globalDurations...)
+		if r.globalHistogram != nil {
+			_ = globalHistogram.Merge(r.globalHistogram)
+		}
 		mergeShardMaps(byName, r.byName)
 	}
 
 	return mergedStats{
 		order:           order,
 		byName:          byName,
-		globalDurations: globalDurations,
+		globalHistogram: globalHistogram,
 		totalSuccess:    totalSuccess,
 		totalFailures:   totalFailures,
 	}
@@ -42,7 +48,12 @@ func mergeShardMaps(dst map[string]*RequestStat, src map[string]*RequestStat) {
 		existing.TotalRuns += stat.TotalRuns
 		existing.Successes += stat.Successes
 		existing.Failures += stat.Failures
-		existing.Durations = append(existing.Durations, stat.Durations...)
+		if existing.Histogram == nil {
+			existing.Histogram = newHistogram()
+		}
+		if stat.Histogram != nil {
+			_ = existing.Histogram.Merge(stat.Histogram)
+		}
 		mergeErrorGroups(&existing.TopErrors, stat.TopErrors)
 	}
 }
@@ -68,18 +79,15 @@ func finalizeReport(m mergedStats, totalDuration time.Duration) Report {
 		if s == nil {
 			continue
 		}
-		sorted := sortDurations(s.Durations)
-		s.P50 = percentile(sorted, 0.50)
-		s.P90 = percentile(sorted, 0.90)
-		s.P95 = percentile(sorted, 0.95)
-		s.P99 = percentile(sorted, 0.99)
-		s.AvgDuration = avg(sorted)
-		s.Durations = sorted
+		s.P50 = durFromQuantileMs(s.Histogram, 50)
+		s.P90 = durFromQuantileMs(s.Histogram, 90)
+		s.P95 = durFromQuantileMs(s.Histogram, 95)
+		s.P99 = durFromQuantileMs(s.Histogram, 99)
+		s.AvgDuration = durFromMeanMs(s.Histogram)
 		perRequest = append(perRequest, *s)
 	}
 
 	// Global percentiles
-	allSorted := sortDurations(m.globalDurations)
 	totalReqs := m.totalSuccess + m.totalFailures
 
 	var successRate float64
@@ -97,11 +105,11 @@ func finalizeReport(m mergedStats, totalDuration time.Duration) Report {
 		TotalSuccess:  m.totalSuccess,
 		TotalFailures: m.totalFailures,
 		SuccessRate:   successRate,
-		AvgLatency:    avg(allSorted),
-		P50:           percentile(allSorted, 0.50),
-		P90:           percentile(allSorted, 0.90),
-		P95:           percentile(allSorted, 0.95),
-		P99:           percentile(allSorted, 0.99),
+		AvgLatency:    durFromMeanMs(m.globalHistogram),
+		P50:           durFromQuantileMs(m.globalHistogram, 50),
+		P90:           durFromQuantileMs(m.globalHistogram, 90),
+		P95:           durFromQuantileMs(m.globalHistogram, 95),
+		P99:           durFromQuantileMs(m.globalHistogram, 99),
 		RPS:           rps,
 		TotalDuration: totalDuration,
 		PerRequest:    perRequest,

@@ -1,27 +1,27 @@
 package metrics
 
 import (
-	"time"
-
 	"reqx/internal/runner"
+
+	"github.com/HdrHistogram/hdrhistogram-go"
 )
 
 type shardResult struct {
 	byName          map[string]*RequestStat
-	globalDurations []time.Duration
+	globalHistogram *hdrhistogram.Histogram
 	totalSuccess    int
 	totalFailures   int
 }
 
 func consumeShard(ch <-chan runner.RequestMetric) shardResult {
 	byName := make(map[string]*RequestStat, 64)
-	var globalDurations []time.Duration
+	globalHistogram := newHistogram()
 	var totalSuccess, totalFailures int
 
 	for m := range ch {
 		stat, ok := byName[m.Name]
 		if !ok {
-			stat = &RequestStat{Name: m.Name}
+			stat = &RequestStat{Name: m.Name, Histogram: newHistogram()}
 			byName[m.Name] = stat
 		}
 
@@ -37,14 +37,14 @@ func consumeShard(ch <-chan runner.RequestMetric) shardResult {
 		}
 
 		if m.Duration > 0 {
-			stat.Durations = append(stat.Durations, m.Duration)
-			globalDurations = append(globalDurations, m.Duration)
+			recordDurationMs(stat.Histogram, m.Duration)
+			recordDurationMs(globalHistogram, m.Duration)
 		}
 	}
 
 	return shardResult{
 		byName:          byName,
-		globalDurations: globalDurations,
+		globalHistogram: globalHistogram,
 		totalSuccess:    totalSuccess,
 		totalFailures:   totalFailures,
 	}

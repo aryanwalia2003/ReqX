@@ -1,6 +1,10 @@
 package metrics
 
-import "time"
+import (
+	"time"
+
+	"github.com/HdrHistogram/hdrhistogram-go"
+)
 
 // RequestStat holds aggregated performance data for a single named request.
 type RequestStat struct {
@@ -8,7 +12,9 @@ type RequestStat struct {
 	TotalRuns   int
 	Successes   int
 	Failures    int
-	Durations   []time.Duration // all HTTP durations, sorted after Analyze
+	// Histogram records request latency in milliseconds.
+	// It replaces storing raw latency samples to avoid huge RAM + sorting costs.
+	Histogram   *hdrhistogram.Histogram
 	P50         time.Duration
 	P90         time.Duration
 	P95         time.Duration
