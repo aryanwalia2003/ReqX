@@ -172,7 +172,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 					}
 				}
 
-				report := metrics.Analyze(allMetrics, time.Since(totalStart))
+				report := metrics.AnalyzeSharded(allMetrics, time.Since(totalStart), 0)
 				metrics.PrintReport(report)
 
 				if exportPath != "" {
@@ -226,7 +226,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 					allMetrics = append(allMetrics, r.Metrics)
 				}
 
-				report := metrics.Analyze(allMetrics, time.Since(totalStartTime))
+				report := metrics.AnalyzeSharded(allMetrics, time.Since(totalStartTime), 0)
 				metrics.PrintReport(report)
 				if exportPath != "" {
 					if err := metrics.ExportJSON(allMetrics, exportPath); err != nil {
@@ -363,10 +363,10 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 			// NEW: Print the Final Aggregated Summary
 			// ==========================================
 			if iterations > 1 {
-				report := metrics.Analyze(allMetrics, time.Since(totalStartTime))
+				report := metrics.AnalyzeSharded(allMetrics, time.Since(totalStartTime), 0)
 				metrics.PrintReport(report)
 			} else if len(allMetrics) > 0 {
-				report := metrics.Analyze(allMetrics, time.Since(totalStartTime))
+				report := metrics.AnalyzeSharded(allMetrics, time.Since(totalStartTime), 0)
 				metrics.PrintReport(report)
 			}
 
