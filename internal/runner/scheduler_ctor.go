@@ -6,6 +6,6 @@ func NewScheduler(cfg SchedulerConfig) *Scheduler {
 	return &Scheduler{
 		cfg:     cfg,
 		results: make(chan WorkerResult, 2048),
-		jobs:    make(chan WorkerJob),
+		wakeCh:  make(chan struct{}),
 	}
 }

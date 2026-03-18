@@ -19,8 +19,8 @@ func (s *Scheduler) Run() []WorkerResult {
 		defer cancel()
 	}
 
-	// Launch the appropriate job injector in a goroutine.
-	go s.injectJobs(ctx)
+	// Launch the conductor goroutine (no central job queue).
+	go s.conduct(ctx)
 
 	// Collect results until the results channel is closed.
 	all := make([]WorkerResult, 0, 512)

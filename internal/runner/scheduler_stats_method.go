@@ -12,7 +12,7 @@ type SchedulerStats struct {
 func (s *Scheduler) Stats() SchedulerStats {
 	return SchedulerStats{
 		ActiveWorkers: s.activeWorkers.Load(),
-		Completed:     s.completedJobs.Load(),
-		Failed:        s.failedJobs.Load(),
+		Completed:     s.completedIterations.Load(),
+		Failed:        s.failedIterations.Load(),
 	}
 }
