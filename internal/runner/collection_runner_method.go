@@ -15,6 +15,7 @@ import (
 
 	"reqx/internal/collection"
 	"reqx/internal/http_executor"
+	"reqx/internal/planner"
 	"reqx/internal/scripting"
 
 	"github.com/fatih/color"
@@ -24,17 +25,15 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 	cr.clearCookiesPerRequest = v
 }
 
-// Run executes all requests and returns the metrics for this single run.
-func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext) ([]RequestMetric, error) {
+// Run executes all requests defined in the ExecutionPlan and returns per-request metrics.
+// The plan is read-only — Run never modifies plan.Requests.
+func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext) ([]RequestMetric, error) {
 	verboseColor := color.New(color.FgYellow)
 	timingColor := color.New(color.FgHiCyan)
 
-	// Metrics are now local to a single run
-	metrics := make([]RequestMetric, 0, len(coll.Requests))
-	
+	metrics := make([]RequestMetric, 0, len(plan.Requests))
 	stopAsyncSockets := make(chan struct{})
-	
-	// This defer is for the async socket kill switch for this single run
+
 	defer func() {
 		if cr.verbosity >= VerbosityNormal {
 			color.Cyan("\nCollection run finished. Waiting for background connections...\n")
@@ -46,120 +45,33 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		}
 	}()
 
-	for _, req := range coll.Requests {
+	for _, req := range plan.Requests {
 		if cr.verbosity >= VerbosityNormal {
-			fmt.Printf("\n▶ Running request: %s\n", req.Name)
+			fmt.Printf("\n[RUN] Running request: %s\n", req.Name)
 		}
 
 		cr.runScripts("prerequest", req.Scripts, ctx, nil)
 		urlStr := cr.replaceVars(req.URL, ctx)
 
 		if strings.ToUpper(req.Protocol) == "WS" {
-			headers := make(map[string]string)
-			for k, v := range req.Headers {
-				headers[k] = cr.replaceVars(v, ctx)
-			}
-
-			var resolvedEvents []collection.WebSocketEvent
-			for _, ev := range req.WSEvents {
-				resolvedEvents = append(resolvedEvents, collection.WebSocketEvent{
-					Type: ev.Type, Payload: cr.replaceVars(ev.Payload, ctx),
-				})
-			}
-
-			startWs := time.Now()
-			if req.Async {
-				fmt.Printf("Starting Background WebSocket connection for '%s'...\n", req.Name)
-				readyChan := make(chan error, 1)
-				cr.wg.Add(1)
-				go func(name, url string, hdrs map[string]string, events []collection.WebSocketEvent) {
-					defer cr.wg.Done()
-					err := cr.weExecutor.Execute(url, hdrs, events, readyChan, stopAsyncSockets)
-					if err != nil {
-						color.Red("\n[BACKGROUND ERROR] WebSocket '%s' failed: %v\n", name, err)
-					}
-				}(req.Name, urlStr, headers, resolvedEvents)
-
-				color.Cyan("⏳ Waiting for WebSocket to establish connection...\n")
-				err := <-readyChan
-				metrics = append(metrics, RequestMetric{
-					Name: req.Name, Protocol: "WS", Duration: time.Since(startWs), StatusString: "ASYNC", Error: err,
-				})
-				if err != nil {
-					color.Yellow("⚠ Background WebSocket failed to connect: %v. Continuing...\n", err)
-				} else {
-					color.Green("✔ Background WebSocket is ready and listening!\n")
-				}
-				cr.runScripts("test", req.Scripts, ctx, nil)
-				continue
-			} else {
-				err := cr.weExecutor.Execute(urlStr, headers, resolvedEvents, nil, nil)
-				metrics = append(metrics, RequestMetric{
-					Name: req.Name, Protocol: "WS", Duration: time.Since(startWs), StatusString: "SYNC", Error: err,
-				})
-				if err != nil {
-					fmt.Printf("WebSocket Request %s failed: %v\n", req.Name, err)
-				}
-				cr.runScripts("test", req.Scripts, ctx, nil)
-				continue
-			}
+			metrics = cr.runWebSocket(req, urlStr, ctx, metrics, stopAsyncSockets)
+			continue
 		}
 
 		if strings.ToUpper(req.Protocol) == "SOCKETIO" {
-			headers := make(map[string]string)
-			for k, v := range req.Headers {
-				headers[k] = cr.replaceVars(v, ctx)
-			}
-			var resolvedEvents []collection.SocketIOEvent
-			for _, ev := range req.Events {
-				resolvedEvents = append(resolvedEvents, collection.SocketIOEvent{
-					Type: ev.Type, Name: cr.replaceVars(ev.Name, ctx), Payload: cr.replaceVars(ev.Payload, ctx),
-				})
-			}
-			startSio := time.Now()
-			if req.Async {
-				fmt.Printf("Starting Background Socket.IO connection for '%s'...\n", req.Name)
-				readyChan := make(chan error, 1)
-				cr.wg.Add(1)
-				go func(name, url string, hdrs map[string]string, events []collection.SocketIOEvent) {
-					defer cr.wg.Done()
-					err := cr.sioExecutor.Execute(url, hdrs, events, readyChan, stopAsyncSockets)
-					if err != nil {
-						color.Red("\n[BACKGROUND ERROR] Socket.IO '%s' failed: %v\n", name, err)
-					}
-				}(req.Name, urlStr, headers, resolvedEvents)
-				color.Cyan("⏳ Waiting for socket to establish connection...\n")
-				err := <-readyChan
-				metrics = append(metrics, RequestMetric{
-					Name: req.Name, Protocol: "SOCKET", Duration: time.Since(startSio), StatusString: "ASYNC", Error: err,
-				})
-				if err != nil {
-					color.Yellow("⚠ Background Socket failed to connect: %v. Continuing...\n", err)
-				} else {
-					color.Green("✔ Background Socket is ready and listening continuously!\n")
-				}
-				cr.runScripts("test", req.Scripts, ctx, nil)
-				continue
-			} else {
-				err := cr.sioExecutor.Execute(urlStr, headers, resolvedEvents, nil, nil)
-				metrics = append(metrics, RequestMetric{
-					Name: req.Name, Protocol: "SOCKET", Duration: time.Since(startSio), StatusString: "SYNC", Error: err,
-				})
-				if err != nil { fmt.Printf("Socket.IO Request %s failed: %v\n", req.Name, err) } else { fmt.Printf("Socket.IO Request %s successful\n", req.Name) }
-				cr.runScripts("test", req.Scripts, ctx, nil)
-				continue
-			}
+			metrics = cr.runSocketIO(req, urlStr, ctx, metrics, stopAsyncSockets)
+			continue
 		}
 
+		// HTTP
 		var bodyReader io.Reader
 		if req.Body != "" {
-			bodyBytes := []byte(cr.replaceVars(req.Body, ctx))
-			bodyReader = bytes.NewBuffer(bodyBytes)
+			bodyReader = bytes.NewBuffer([]byte(cr.replaceVars(req.Body, ctx)))
 		}
 
 		httpReq, err := http.NewRequest(strings.ToUpper(req.Method), urlStr, bodyReader)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Printf("Error building request: %v\n", err)
 			metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "HTTP", Error: err})
 			continue
 		}
@@ -167,7 +79,8 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		for k, v := range req.Headers {
 			httpReq.Header.Set(k, cr.replaceVars(v, ctx))
 		}
-		http_executor.ApplyAuth(httpReq, cr.resolveAuth(req.Auth, coll.Auth, ctx))
+		http_executor.ApplyAuth(httpReq, cr.resolveAuth(req.Auth, plan.CollectionAuth, ctx))
+
 		if cr.verbosity >= VerbosityFull {
 			verboseColor.Println("-------------------- REQUEST --------------------")
 			dump, _ := httputil.DumpRequestOut(httpReq, true)
@@ -187,7 +100,7 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			DNSStart:             func(_ httptrace.DNSStartInfo) { dnsStart = time.Now() },
 			DNSDone:              func(_ httptrace.DNSDoneInfo) { dnsDone = time.Now() },
 			ConnectStart:         func(_, _ string) { connStart = time.Now() },
-			ConnectDone:          func(net, addr string, err error) { connDone = time.Now() },
+			ConnectDone:          func(_, _ string, _ error) { connDone = time.Now() },
 			TLSHandshakeStart:    func() { tlsStart = time.Now() },
 			TLSHandshakeDone:     func(_ tls.ConnectionState, _ error) { tlsDone = time.Now() },
 			WroteRequest:         func(_ httptrace.WroteRequestInfo) { reqDone = time.Now() },
@@ -198,8 +111,11 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 		t0 = time.Now()
 		resp, err := cr.executor.Execute(httpReq)
 		totalTime := time.Since(t0)
+
 		if err != nil {
-			fmt.Printf("Request Failed: %v\n", err)
+			if cr.verbosity >= VerbosityNormal {
+				fmt.Printf("Request Failed: %v\n", err)
+			}
 			metrics = append(metrics, RequestMetric{
 				Name: req.Name, Protocol: "HTTP",
 				Duration: totalTime, Error: err, ErrorMsg: err.Error(),
@@ -209,37 +125,51 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+
 		m := RequestMetric{
-			Name: req.Name, Protocol: "HTTP", StatusCode: resp.StatusCode, StatusString: resp.Status, Duration: totalTime,
+			Name: req.Name, Protocol: "HTTP",
+			StatusCode: resp.StatusCode, StatusString: resp.Status, Duration: totalTime,
 		}
 		if resp.StatusCode >= 400 {
 			m.ErrorMsg = resp.Status
 		}
 		metrics = append(metrics, m)
 
-		var dnsTime, tcpTime, tlsTime, ttfbTime, transferTime time.Duration
-		if !dnsDone.IsZero() { dnsTime = dnsDone.Sub(dnsStart) }
-		if !connDone.IsZero() { tcpTime = connDone.Sub(connStart) }
-		if !tlsDone.IsZero() { tlsTime = tlsDone.Sub(tlsStart) }
-		if !resStart.IsZero() {
-			if !reqDone.IsZero() { ttfbTime = resStart.Sub(reqDone) } else { ttfbTime = resStart.Sub(t0) }
-			transferTime = time.Since(resStart)
-		}
-
 		if cr.verbosity >= VerbosityFull {
+			var dnsTime, tcpTime, tlsTime, ttfbTime, transferTime time.Duration
+			if !dnsDone.IsZero() {
+				dnsTime = dnsDone.Sub(dnsStart)
+			}
+			if !connDone.IsZero() {
+				tcpTime = connDone.Sub(connStart)
+			}
+			if !tlsDone.IsZero() {
+				tlsTime = tlsDone.Sub(tlsStart)
+			}
+			if !resStart.IsZero() {
+				if !reqDone.IsZero() {
+					ttfbTime = resStart.Sub(reqDone)
+				} else {
+					ttfbTime = resStart.Sub(t0)
+				}
+				transferTime = time.Since(resStart)
+			}
 			verboseColor.Println("-------------------- RESPONSE -------------------")
 			verboseColor.Printf("< %s %s\n", resp.Proto, resp.Status)
 			for key, values := range resp.Header {
-				if isNoisyHeader(key) { continue }
-				for _, value := range values { verboseColor.Printf("< %s: %s\n", key, value) }
+				if isNoisyHeader(key) {
+					continue
+				}
+				for _, value := range values {
+					verboseColor.Printf("< %s: %s\n", key, value)
+				}
 			}
 			verboseColor.Println("<")
 			if len(bodyBytes) > 0 {
-				contentType := resp.Header.Get("Content-Type")
-				if strings.Contains(contentType, "json") {
-					var prettyJSON bytes.Buffer
-					if err := json.Indent(&prettyJSON, bodyBytes, "", "  "); err == nil {
-						fmt.Println(prettyJSON.String())
+				if strings.Contains(resp.Header.Get("Content-Type"), "json") {
+					var pretty bytes.Buffer
+					if err := json.Indent(&pretty, bodyBytes, "", "  "); err == nil {
+						fmt.Println(pretty.String())
 					} else {
 						fmt.Println(string(bodyBytes))
 					}
@@ -257,20 +187,22 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 			timingColor.Printf("  Total Time     : %v\n", roundMs(totalTime))
 			timingColor.Println("-------------------------------------------------")
 		}
-		statusColor := color.New(color.FgHiGreen).SprintfFunc()
-		if resp.StatusCode >= 400 {
-			statusColor = color.New(color.FgHiRed).SprintfFunc()
-		}
 		if cr.verbosity >= VerbosityNormal {
+			statusColor := color.New(color.FgHiGreen).SprintfFunc()
+			if resp.StatusCode >= 400 {
+				statusColor = color.New(color.FgHiRed).SprintfFunc()
+			}
 			fmt.Printf("Status: %s  |  Time: %v\n", statusColor(resp.Status), roundMs(totalTime))
 		}
-		
+
 		scriptResp := &scripting.ResponseAPI{
 			BodyString: string(bodyBytes),
 			Headers:    &scripting.ResponseHeaders{Headers: make(map[string]string)},
 		}
 		for k, v := range resp.Header {
-			if len(v) > 0 { scriptResp.Headers.Headers[k] = v[0] }
+			if len(v) > 0 {
+				scriptResp.Headers.Headers[k] = v[0]
+			}
 		}
 		cr.runScripts("test", req.Scripts, ctx, scriptResp)
 	}
@@ -278,10 +210,102 @@ func (cr *CollectionRunner) Run(coll *collection.Collection, ctx *RuntimeContext
 	return metrics, nil
 }
 
+// runWebSocket executes a WebSocket request.
+
+func (cr *CollectionRunner) runWebSocket(
+	req collection.Request, urlStr string,
+	ctx *RuntimeContext, metrics []RequestMetric,
+	stop chan struct{},
+) []RequestMetric {
+	headers := cr.resolvedHeaders(req.Headers, ctx)
+	var events []collection.WebSocketEvent
+	for _, ev := range req.WSEvents {
+		events = append(events, collection.WebSocketEvent{Type: ev.Type, Payload: cr.replaceVars(ev.Payload, ctx)})
+	}
+	start := time.Now()
+	if req.Async {
+		readyChan := make(chan error, 1)
+		cr.wg.Add(1)
+		go func(name, url string, hdrs map[string]string, evs []collection.WebSocketEvent) {
+			defer cr.wg.Done()
+			if err := cr.weExecutor.Execute(url, hdrs, evs, readyChan, stop); err != nil {
+				color.Red("\n[BACKGROUND ERROR] WS '%s': %v\n", name, err)
+			}
+		}(req.Name, urlStr, headers, events)
+		color.Cyan("Waiting for WebSocket to connect...\n")
+		err := <-readyChan
+		metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "WS", Duration: time.Since(start), StatusString: "ASYNC", Error: err})
+		if err != nil {
+			color.Yellow("⚠ Background WS failed: %v. Continuing...\n", err)
+		} else {
+			color.Green("Background WS ready!\n")
+		}
+		cr.runScripts("test", req.Scripts, ctx, nil)
+		return metrics
+	}
+	err := cr.weExecutor.Execute(urlStr, headers, events, nil, nil)
+	metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "WS", Duration: time.Since(start), StatusString: "SYNC", Error: err})
+	if err != nil {
+		fmt.Printf("WS request %s failed: %v\n", req.Name, err)
+	}
+	cr.runScripts("test", req.Scripts, ctx, nil)
+	return metrics
+}
+
+// runSocketIO executes a Socket.IO request.
+
+func (cr *CollectionRunner) runSocketIO(
+	req collection.Request, urlStr string,
+	ctx *RuntimeContext, metrics []RequestMetric,
+	stop chan struct{},
+) []RequestMetric {
+	headers := cr.resolvedHeaders(req.Headers, ctx)
+	var events []collection.SocketIOEvent
+	for _, ev := range req.Events {
+		events = append(events, collection.SocketIOEvent{Type: ev.Type, Name: cr.replaceVars(ev.Name, ctx), Payload: cr.replaceVars(ev.Payload, ctx)})
+	}
+	start := time.Now()
+	if req.Async {
+		readyChan := make(chan error, 1)
+		cr.wg.Add(1)
+		go func(name, url string, hdrs map[string]string, evs []collection.SocketIOEvent) {
+			defer cr.wg.Done()
+			if err := cr.sioExecutor.Execute(url, hdrs, evs, readyChan, stop); err != nil {
+				color.Red("\n[BACKGROUND ERROR] SIO '%s': %v\n", name, err)
+			}
+		}(req.Name, urlStr, headers, events)
+		color.Cyan("Waiting for Socket.IO to connect...\n")
+		err := <-readyChan
+		metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "SOCKET", Duration: time.Since(start), StatusString: "ASYNC", Error: err})
+		if err != nil {
+			color.Yellow("⚠ Background Socket failed: %v. Continuing...\n", err)
+		} else {
+			color.Green("Background Socket ready!\n")
+		}
+		cr.runScripts("test", req.Scripts, ctx, nil)
+		return metrics
+	}
+	err := cr.sioExecutor.Execute(urlStr, headers, events, nil, nil)
+	metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "SOCKET", Duration: time.Since(start), StatusString: "SYNC", Error: err})
+	if err != nil {
+		fmt.Printf("SIO request %s failed: %v\n", req.Name, err)
+	} else {
+		fmt.Printf("SIO request %s OK\n", req.Name)
+	}
+	cr.runScripts("test", req.Scripts, ctx, nil)
+	return metrics
+}
+
+// Helpers
+
 func (cr *CollectionRunner) resolveAuth(reqAuth, collAuth *collection.Auth, ctx *RuntimeContext) *collection.Auth {
 	src := reqAuth
-	if src == nil { src = collAuth }
-	if src == nil { return nil }
+	if src == nil {
+		src = collAuth
+	}
+	if src == nil {
+		return nil
+	}
 	resolved := &collection.Auth{
 		Type:     src.Type,
 		Token:    cr.replaceVars(src.Token, ctx),
@@ -303,8 +327,7 @@ func (cr *CollectionRunner) resolveAuth(reqAuth, collAuth *collection.Auth, ctx 
 func (cr *CollectionRunner) runScripts(scriptType string, scripts []collection.Script, ctx *RuntimeContext, resp *scripting.ResponseAPI) {
 	for _, s := range scripts {
 		if s.Type == scriptType {
-			err := cr.scriptRunner.Execute(&s, ctx.Environment, resp)
-			if err != nil {
+			if err := cr.scriptRunner.Execute(&s, ctx.Environment, resp); err != nil {
 				fmt.Printf("Warning: script execution failed: %v\n", err)
 			}
 		}
@@ -312,10 +335,20 @@ func (cr *CollectionRunner) runScripts(scriptType string, scripts []collection.S
 }
 
 func (cr *CollectionRunner) replaceVars(input string, ctx *RuntimeContext) string {
-	if ctx == nil || ctx.Environment == nil { return input }
+	if ctx == nil || ctx.Environment == nil {
+		return input
+	}
 	out := input
 	for k, v := range ctx.Environment.Variables {
 		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
+	}
+	return out
+}
+
+func (cr *CollectionRunner) resolvedHeaders(raw map[string]string, ctx *RuntimeContext) map[string]string {
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		out[k] = cr.replaceVars(v, ctx)
 	}
 	return out
 }
@@ -334,6 +367,8 @@ func isNoisyHeader(header string) bool {
 }
 
 func roundMs(d time.Duration) string {
-	if d == 0 { return "0ms" }
+	if d == 0 {
+		return "0ms"
+	}
 	return fmt.Sprintf("%dms", d.Milliseconds())
 }

@@ -10,6 +10,7 @@ import (
 	"reqx/internal/collection"
 	"reqx/internal/errs"
 	"reqx/internal/http_executor"
+	"reqx/internal/planner"
 	"reqx/internal/runner"
 	"reqx/internal/storage"
 )
@@ -63,8 +64,7 @@ Perfect for:
 				Body:    body,
 			}
 
-			dummyColl := &collection.Collection{
-				Name:     "Ad-hoc Collection",
+			plan := &planner.ExecutionPlan{
 				Requests: []collection.Request{singleReq},
 			}
 
@@ -89,7 +89,7 @@ Perfect for:
 			if verbose {
 				engine.SetVerbosity(runner.VerbosityFull)
 			}
-			_, err := engine.Run(dummyColl, ctx)
+			_, err := engine.Run(plan, ctx)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Request Failed: %v\n", err)
 				os.Exit(1)

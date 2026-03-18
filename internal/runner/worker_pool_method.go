@@ -1,29 +1,28 @@
 package runner
 
 import (
-	"reqx/internal/collection"
 	"reqx/internal/environment"
 	"reqx/internal/http_executor"
 	"reqx/internal/personas"
+	"reqx/internal/planner"
 	"reqx/internal/progress"
 	"reqx/internal/scripting"
 	"sync"
 )
 
-// WorkerConfig holds the shared, read-only inputs every worker needs.
+// WorkerConfig holds the shared, read-only inputs every WorkerPool goroutine needs.
 type WorkerConfig struct {
-	Coll         *collection.Collection
-	BaseEnv      *environment.Environment
+	Plan         *planner.ExecutionPlan   // immutable; replaces Coll
+	BaseEnv      *environment.Environment // cloned per worker
 	NoCookies    bool
 	ClearCookies bool
-	Verbosity    int // VerbosityQuiet suppresses per-request logs and shows progress bar
+	Verbosity    int
 	Personas     []personas.Persona
 }
 
 // Run distributes totalIterations jobs across the pool and returns all results.
-// When Verbosity is VerbosityQuiet, a real-time progress bar is shown instead of logs.
 func (wp *WorkerPool) Run(cfg WorkerConfig, totalIterations int) []WorkerResult {
-	jobs    := make(chan WorkerJob, totalIterations)
+	jobs := make(chan WorkerJob, totalIterations)
 	results := make(chan WorkerResult, totalIterations)
 
 	var bar *progress.Bar
@@ -38,7 +37,7 @@ func (wp *WorkerPool) Run(cfg WorkerConfig, totalIterations int) []WorkerResult 
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			runWorker(cfg, id, jobs, results, bar)
+			poolWorkerLoop(cfg, id, jobs, results, bar)
 		}(workerID)
 	}
 
@@ -62,10 +61,10 @@ func (wp *WorkerPool) Run(cfg WorkerConfig, totalIterations int) []WorkerResult 
 	return all
 }
 
-// runWorker consumes jobs and executes one CollectionRunner per job.
-func runWorker(cfg WorkerConfig, workerID int, jobs <-chan WorkerJob, results chan<- WorkerResult, bar *progress.Bar) {
+// poolWorkerLoop consumes jobs and executes one isolated plan pass per job.
+func poolWorkerLoop(cfg WorkerConfig, workerID int, jobs <-chan WorkerJob, results chan<- WorkerResult, bar *progress.Bar) {
 	for job := range jobs {
-		metrics, err := executeIteration(cfg, workerID)
+		metrics, err := poolExecuteOne(cfg, workerID)
 		if bar != nil {
 			bar.IncrementDone()
 			if err != nil {
@@ -76,15 +75,14 @@ func runWorker(cfg WorkerConfig, workerID int, jobs <-chan WorkerJob, results ch
 	}
 }
 
-// executeIteration builds isolated state and runs one full collection pass.
-func executeIteration(cfg WorkerConfig, workerID int) ([]RequestMetric, error) {
-	ctx := NewRuntimeContext()
+func poolExecuteOne(cfg WorkerConfig, workerID int) ([]RequestMetric, error) {
+	rtCtx := NewRuntimeContext()
 	if cfg.BaseEnv != nil {
-		ctx.SetEnvironment(cfg.BaseEnv.Clone())
+		rtCtx.SetEnvironment(cfg.BaseEnv.Clone())
 	}
 	if len(cfg.Personas) > 0 {
 		p := cfg.Personas[(workerID-1)%len(cfg.Personas)]
-		applyPersona(ctx, p)
+		applyPersona(rtCtx, p)
 	}
 
 	exec := http_executor.NewDefaultExecutor()
@@ -98,9 +96,7 @@ func executeIteration(cfg WorkerConfig, workerID int) ([]RequestMetric, error) {
 		engine.SetClearCookiesPerRequest(true)
 	}
 
-	metrics, err := engine.Run(cfg.Coll, ctx)
-
-	// Tag every metric with this worker's ID for export traceability
+	metrics, err := engine.Run(cfg.Plan, rtCtx)
 	for i := range metrics {
 		metrics[i].WorkerID = workerID
 	}

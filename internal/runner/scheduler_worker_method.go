@@ -37,6 +37,7 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 }
 
 // executeOne runs a single collection pass in an isolated context.
+// Reads from s.cfg.Plan — never mutates it.
 func (s *Scheduler) executeOne(ctx context.Context, workerID int) ([]RequestMetric, error) {
 	rtCtx := NewRuntimeContext()
 	if s.cfg.BaseEnv != nil {
@@ -58,7 +59,8 @@ func (s *Scheduler) executeOne(ctx context.Context, workerID int) ([]RequestMetr
 		engine.SetClearCookiesPerRequest(true)
 	}
 
-	metrics, err := engine.Run(s.cfg.Coll, rtCtx)
+	// Pass the immutable plan — engine reads it, never writes it.
+	metrics, err := engine.Run(s.cfg.Plan, rtCtx)
 	for i := range metrics {
 		metrics[i].WorkerID = workerID
 	}
