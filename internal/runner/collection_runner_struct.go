@@ -5,7 +5,6 @@ import (
 	"reqx/internal/scripting"
 	"reqx/internal/socketio_executor"
 	"reqx/internal/websocket_executor"
-	"sync"
 	"time"
 )
 
@@ -27,7 +26,6 @@ type CollectionRunner struct {
 	scriptRunner          scripting.ScriptRunner
 	clearCookiesPerRequest bool // if true, jar is cleared before each request
 	verbosity             int
-	wg                    *sync.WaitGroup
 }
 
 

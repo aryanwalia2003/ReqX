@@ -11,6 +11,7 @@ import (
 	"net/http/httptrace"
 	"net/http/httputil"
 	"strings"
+	"sync"
 	"time"
 
 	"reqx/internal/collection"
@@ -27,19 +28,27 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 
 // Run executes all requests defined in the ExecutionPlan and returns per-request metrics.
 // The plan is read-only — Run never modifies plan.Requests.
+//
+// The WaitGroup for async background tasks (WS/SIO async: true) is declared
+// locally here. This means the same CollectionRunner can be called in a loop
+// across iterations without any WaitGroup reuse panic — each Run() call gets
+// a fresh, zeroed WaitGroup on the stack, independent of every other call.
 func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext) ([]RequestMetric, error) {
 	verboseColor := color.New(color.FgYellow)
-	timingColor := color.New(color.FgHiCyan)
+	timingColor  := color.New(color.FgHiCyan)
+
+	// Local WaitGroup — fresh every call, no cross-iteration bleed.
+	var wg sync.WaitGroup
+	stopAsyncSockets := make(chan struct{})
 
 	metrics := make([]RequestMetric, 0, len(plan.Requests))
-	stopAsyncSockets := make(chan struct{})
 
 	defer func() {
 		if cr.verbosity >= VerbosityNormal {
 			color.Cyan("\nCollection run finished. Waiting for background connections...\n")
 		}
 		close(stopAsyncSockets)
-		cr.wg.Wait()
+		wg.Wait() // waits only for goroutines spawned THIS call
 		if cr.verbosity >= VerbosityNormal {
 			color.Green("All connections closed cleanly.\n")
 		}
@@ -54,16 +63,16 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 		urlStr := cr.replaceVars(req.URL, ctx)
 
 		if strings.ToUpper(req.Protocol) == "WS" {
-			metrics = cr.runWebSocket(req, urlStr, ctx, metrics, stopAsyncSockets)
+			metrics = cr.runWebSocket(req, urlStr, ctx, &wg, metrics, stopAsyncSockets)
 			continue
 		}
 
 		if strings.ToUpper(req.Protocol) == "SOCKETIO" {
-			metrics = cr.runSocketIO(req, urlStr, ctx, metrics, stopAsyncSockets)
+			metrics = cr.runSocketIO(req, urlStr, ctx, &wg, metrics, stopAsyncSockets)
 			continue
 		}
 
-		// HTTP
+		// ── HTTP ─────────────────────────────────────────────────────────────
 		var bodyReader io.Reader
 		if req.Body != "" {
 			bodyReader = bytes.NewBuffer([]byte(cr.replaceVars(req.Body, ctx)))
@@ -139,32 +148,18 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 
 		if cr.verbosity >= VerbosityFull {
 			var dnsTime, tcpTime, tlsTime, ttfbTime, transferTime time.Duration
-			if !dnsDone.IsZero() {
-				dnsTime = dnsDone.Sub(dnsStart)
-			}
-			if !connDone.IsZero() {
-				tcpTime = connDone.Sub(connStart)
-			}
-			if !tlsDone.IsZero() {
-				tlsTime = tlsDone.Sub(tlsStart)
-			}
+			if !dnsDone.IsZero()  { dnsTime  = dnsDone.Sub(dnsStart) }
+			if !connDone.IsZero() { tcpTime  = connDone.Sub(connStart) }
+			if !tlsDone.IsZero()  { tlsTime  = tlsDone.Sub(tlsStart) }
 			if !resStart.IsZero() {
-				if !reqDone.IsZero() {
-					ttfbTime = resStart.Sub(reqDone)
-				} else {
-					ttfbTime = resStart.Sub(t0)
-				}
+				if !reqDone.IsZero() { ttfbTime = resStart.Sub(reqDone) } else { ttfbTime = resStart.Sub(t0) }
 				transferTime = time.Since(resStart)
 			}
 			verboseColor.Println("-------------------- RESPONSE -------------------")
 			verboseColor.Printf("< %s %s\n", resp.Proto, resp.Status)
 			for key, values := range resp.Header {
-				if isNoisyHeader(key) {
-					continue
-				}
-				for _, value := range values {
-					verboseColor.Printf("< %s: %s\n", key, value)
-				}
+				if isNoisyHeader(key) { continue }
+				for _, value := range values { verboseColor.Printf("< %s: %s\n", key, value) }
 			}
 			verboseColor.Println("<")
 			if len(bodyBytes) > 0 {
@@ -206,9 +201,7 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 			Headers:    &scripting.ResponseHeaders{Headers: make(map[string]string)},
 		}
 		for k, v := range resp.Header {
-			if len(v) > 0 {
-				scriptResp.Headers.Headers[k] = v[0]
-			}
+			if len(v) > 0 { scriptResp.Headers.Headers[k] = v[0] }
 		}
 		cr.runScripts("test", req.Scripts, ctx, scriptResp)
 	}
@@ -216,12 +209,13 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 	return metrics, nil
 }
 
-// runWebSocket executes a WebSocket request.
+// ── WebSocket helper ──────────────────────────────────────────────────────────
 
+// wg is passed by pointer from Run() — it is the local WaitGroup for this iteration.
 func (cr *CollectionRunner) runWebSocket(
 	req collection.Request, urlStr string,
-	ctx *RuntimeContext, metrics []RequestMetric,
-	stop chan struct{},
+	ctx *RuntimeContext, wg *sync.WaitGroup,
+	metrics []RequestMetric, stop chan struct{},
 ) []RequestMetric {
 	headers := cr.resolvedHeaders(req.Headers, ctx)
 	var events []collection.WebSocketEvent
@@ -231,9 +225,9 @@ func (cr *CollectionRunner) runWebSocket(
 	start := time.Now()
 	if req.Async {
 		readyChan := make(chan error, 1)
-		cr.wg.Add(1)
+		wg.Add(1)
 		go func(name, url string, hdrs map[string]string, evs []collection.WebSocketEvent) {
-			defer cr.wg.Done()
+			defer wg.Done()
 			if err := cr.weExecutor.Execute(url, hdrs, evs, readyChan, stop); err != nil {
 				color.Red("\n[BACKGROUND ERROR] WS '%s': %v\n", name, err)
 			}
@@ -241,29 +235,23 @@ func (cr *CollectionRunner) runWebSocket(
 		color.Cyan("Waiting for WebSocket to connect...\n")
 		err := <-readyChan
 		metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "WS", Duration: time.Since(start), StatusString: "ASYNC", Error: err})
-		if err != nil {
-			color.Yellow("⚠ Background WS failed: %v. Continuing...\n", err)
-		} else {
-			color.Green("Background WS ready!\n")
-		}
+		if err != nil { color.Yellow("⚠ Background WS failed: %v. Continuing...\n", err) } else { color.Green("Background WS ready!\n") }
 		cr.runScripts("test", req.Scripts, ctx, nil)
 		return metrics
 	}
 	err := cr.weExecutor.Execute(urlStr, headers, events, nil, nil)
 	metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "WS", Duration: time.Since(start), StatusString: "SYNC", Error: err})
-	if err != nil {
-		fmt.Printf("WS request %s failed: %v\n", req.Name, err)
-	}
+	if err != nil { fmt.Printf("WS request %s failed: %v\n", req.Name, err) }
 	cr.runScripts("test", req.Scripts, ctx, nil)
 	return metrics
 }
 
-// runSocketIO executes a Socket.IO request.
+// ── Socket.IO helper ──────────────────────────────────────────────────────────
 
 func (cr *CollectionRunner) runSocketIO(
 	req collection.Request, urlStr string,
-	ctx *RuntimeContext, metrics []RequestMetric,
-	stop chan struct{},
+	ctx *RuntimeContext, wg *sync.WaitGroup,
+	metrics []RequestMetric, stop chan struct{},
 ) []RequestMetric {
 	headers := cr.resolvedHeaders(req.Headers, ctx)
 	var events []collection.SocketIOEvent
@@ -273,9 +261,9 @@ func (cr *CollectionRunner) runSocketIO(
 	start := time.Now()
 	if req.Async {
 		readyChan := make(chan error, 1)
-		cr.wg.Add(1)
+		wg.Add(1)
 		go func(name, url string, hdrs map[string]string, evs []collection.SocketIOEvent) {
-			defer cr.wg.Done()
+			defer wg.Done()
 			if err := cr.sioExecutor.Execute(url, hdrs, evs, readyChan, stop); err != nil {
 				color.Red("\n[BACKGROUND ERROR] SIO '%s': %v\n", name, err)
 			}
@@ -283,49 +271,31 @@ func (cr *CollectionRunner) runSocketIO(
 		color.Cyan("Waiting for Socket.IO to connect...\n")
 		err := <-readyChan
 		metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "SOCKET", Duration: time.Since(start), StatusString: "ASYNC", Error: err})
-		if err != nil {
-			color.Yellow("⚠ Background Socket failed: %v. Continuing...\n", err)
-		} else {
-			color.Green("Background Socket ready!\n")
-		}
+		if err != nil { color.Yellow("⚠ Background Socket failed: %v. Continuing...\n", err) } else { color.Green("Background Socket ready!\n") }
 		cr.runScripts("test", req.Scripts, ctx, nil)
 		return metrics
 	}
 	err := cr.sioExecutor.Execute(urlStr, headers, events, nil, nil)
 	metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "SOCKET", Duration: time.Since(start), StatusString: "SYNC", Error: err})
-	if err != nil {
-		fmt.Printf("SIO request %s failed: %v\n", req.Name, err)
-	} else {
-		fmt.Printf("SIO request %s OK\n", req.Name)
-	}
+	if err != nil { fmt.Printf("SIO request %s failed: %v\n", req.Name, err) } else { fmt.Printf("SIO request %s OK\n", req.Name) }
 	cr.runScripts("test", req.Scripts, ctx, nil)
 	return metrics
 }
 
-// Helpers
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 func (cr *CollectionRunner) resolveAuth(reqAuth, collAuth *collection.Auth, ctx *RuntimeContext) *collection.Auth {
 	src := reqAuth
-	if src == nil {
-		src = collAuth
-	}
-	if src == nil {
-		return nil
-	}
+	if src == nil { src = collAuth }
+	if src == nil { return nil }
 	resolved := &collection.Auth{
-		Type:     src.Type,
-		Token:    cr.replaceVars(src.Token, ctx),
-		Username: cr.replaceVars(src.Username, ctx),
-		Password: cr.replaceVars(src.Password, ctx),
-		Key:      cr.replaceVars(src.Key, ctx),
-		Value:    cr.replaceVars(src.Value, ctx),
-		In:       src.In,
+		Type: src.Type, Token: cr.replaceVars(src.Token, ctx),
+		Username: cr.replaceVars(src.Username, ctx), Password: cr.replaceVars(src.Password, ctx),
+		Key: cr.replaceVars(src.Key, ctx), Value: cr.replaceVars(src.Value, ctx), In: src.In,
 	}
 	if src.Cookies != nil {
 		resolved.Cookies = make(map[string]string, len(src.Cookies))
-		for k, v := range src.Cookies {
-			resolved.Cookies[k] = cr.replaceVars(v, ctx)
-		}
+		for k, v := range src.Cookies { resolved.Cookies[k] = cr.replaceVars(v, ctx) }
 	}
 	return resolved
 }
@@ -341,9 +311,7 @@ func (cr *CollectionRunner) runScripts(scriptType string, scripts []collection.S
 }
 
 func (cr *CollectionRunner) replaceVars(input string, ctx *RuntimeContext) string {
-	if ctx == nil || ctx.Environment == nil {
-		return input
-	}
+	if ctx == nil || ctx.Environment == nil { return input }
 	out := input
 	for k, v := range ctx.Environment.Variables {
 		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
@@ -353,9 +321,7 @@ func (cr *CollectionRunner) replaceVars(input string, ctx *RuntimeContext) strin
 
 func (cr *CollectionRunner) resolvedHeaders(raw map[string]string, ctx *RuntimeContext) map[string]string {
 	out := make(map[string]string, len(raw))
-	for k, v := range raw {
-		out[k] = cr.replaceVars(v, ctx)
-	}
+	for k, v := range raw { out[k] = cr.replaceVars(v, ctx) }
 	return out
 }
 
@@ -373,8 +339,6 @@ func isNoisyHeader(header string) bool {
 }
 
 func roundMs(d time.Duration) string {
-	if d == 0 {
-		return "0ms"
-	}
+	if d == 0 { return "0ms" }
 	return fmt.Sprintf("%dms", d.Milliseconds())
 }

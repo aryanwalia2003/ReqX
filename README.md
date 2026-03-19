@@ -6,9 +6,16 @@
 
 ## ⚡ Quick Install (Windows)
 
-Open PowerShell as **Administrator** and run this one-liner to download and install the latest version:
+### Option 1: PowerShell (Recommended)
+Open PowerShell as **Administrator** and run:
 ```powershell
 iwr -useb https://raw.githubusercontent.com/aryanwalia2003/reqx/main/install.ps1 | iex
+```
+
+### Option 2: Command Prompt (CMD)
+Open CMD as **Administrator** and run:
+```cmd
+powershell -ExecutionPolicy ByPass -Command "iwr -useb https://raw.githubusercontent.com/aryanwalia2003/reqx/main/install.ps1 | iex"
 ```
 
 ---

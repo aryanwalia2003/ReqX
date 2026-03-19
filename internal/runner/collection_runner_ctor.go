@@ -5,7 +5,6 @@ import (
 	"reqx/internal/scripting"
 	"reqx/internal/socketio_executor"
 	"reqx/internal/websocket_executor"
-	"sync"
 )
 
 // NewCollectionRunner constructs the orchestration engine.
@@ -30,7 +29,6 @@ func NewCollectionRunner(exec *http_executor.DefaultExecutor, sio socketio_execu
 		weExecutor:   we,
 		scriptRunner: script,
 		verbosity:    VerbosityNormal,
-		wg:          &sync.WaitGroup{},
 	}
 }
 
