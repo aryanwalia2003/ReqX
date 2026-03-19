@@ -96,7 +96,9 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 		}
 
 		var t0, dnsStart, dnsDone, connStart, connDone, tlsStart, tlsDone, reqDone, resStart time.Time
+		var reused bool
 		trace := &httptrace.ClientTrace{
+			GotConn:              func(info httptrace.GotConnInfo) { reused = info.Reused },
 			DNSStart:             func(_ httptrace.DNSStartInfo) { dnsStart = time.Now() },
 			DNSDone:              func(_ httptrace.DNSDoneInfo) { dnsDone = time.Now() },
 			ConnectStart:         func(_, _ string) { connStart = time.Now() },
@@ -178,9 +180,13 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 				}
 			}
 			timingColor.Println("-------------------- TIMINGS --------------------")
-			timingColor.Printf("  DNS Lookup     : %v\n", roundMs(dnsTime))
-			timingColor.Printf("  TCP Connection : %v\n", roundMs(tcpTime))
-			timingColor.Printf("  TLS Handshake  : %v\n", roundMs(tlsTime))
+			if reused {
+				timingColor.Printf("  Connection     : Reused (Pooled)\n")
+			} else {
+				timingColor.Printf("  DNS Lookup     : %v\n", roundMs(dnsTime))
+				timingColor.Printf("  TCP Connection : %v\n", roundMs(tcpTime))
+				timingColor.Printf("  TLS Handshake  : %v\n", roundMs(tlsTime))
+			}
 			timingColor.Printf("  Server (TTFB)  : %v\n", roundMs(ttfbTime))
 			timingColor.Printf("  Data Transfer  : %v\n", roundMs(transferTime))
 			timingColor.Printf("  --------------------------\n")
