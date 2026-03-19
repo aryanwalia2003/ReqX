@@ -4,24 +4,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dop251/goja"
 	"github.com/fatih/color"
 	"reqx/internal/collection"
 	"reqx/internal/environment"
 	"reqx/internal/errs"
 )
 
-// Execute runs a JavaScript snippet within a fresh VM, injecting the Environment and optional Response.
+// Execute runs a JavaScript snippet within a pooled VM, injecting the Environment and optional Response.
 func (g *GojaRunner) Execute(script *collection.Script, env *environment.Environment, resp *ResponseAPI) error {
 	if script == nil || len(script.Exec) == 0 {
 		return nil
 	}
 
-	vm := goja.New()
-	
-	// Ensure JS camelCase/lowercase maps to Go PascalCase methods
-	vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
-
+	vm := acquireVM()
+	defer releaseVM(vm)
 
 	// 1. Inject Console Interceptor
 	vm.Set("console", &ConsoleAPI{})
@@ -38,7 +34,7 @@ func (g *GojaRunner) Execute(script *collection.Script, env *environment.Environ
 		Response:    resp,
 		TestResults: &testResults,
 	}
-	
+
 	vm.Set("pm", pmObj)
 
 	// Combine script lines into one block
@@ -53,7 +49,6 @@ func (g *GojaRunner) Execute(script *collection.Script, env *environment.Environ
 	// Dump test results to the terminal for visibility
 	for _, res := range testResults {
 		if res.Passed {
-			// Eventually use colors, but plain text for now
 			fmt.Println(color.GreenString("✅ PASS: " + res.Name))
 		} else {
 			fmt.Println(color.RedString("❌ FAIL: " + res.Name + " | " + res.Error))

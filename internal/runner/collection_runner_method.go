@@ -134,8 +134,10 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 			continue
 		}
 
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		buf := acquireBodyBuf()
+		_, _ = io.Copy(buf, resp.Body)
 		resp.Body.Close()
+		bodyBytes := buf.Bytes()
 
 		m := RequestMetric{
 			Name: req.Name, Protocol: "HTTP",
@@ -164,12 +166,13 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 			verboseColor.Println("<")
 			if len(bodyBytes) > 0 {
 				if strings.Contains(resp.Header.Get("Content-Type"), "json") {
-					var pretty bytes.Buffer
-					if err := json.Indent(&pretty, bodyBytes, "", "  "); err == nil {
-						fmt.Println(pretty.String())
+					prettyBuf := acquireBodyBuf()
+					if err := json.Indent(prettyBuf, bodyBytes, "", "  "); err == nil {
+						fmt.Println(prettyBuf.String())
 					} else {
 						fmt.Println(string(bodyBytes))
 					}
+					releaseBodyBuf(prettyBuf)
 				} else {
 					fmt.Println(string(bodyBytes))
 				}
@@ -196,8 +199,11 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 			fmt.Printf("Status: %s  |  Time: %v\n", statusColor(resp.Status), roundMs(totalTime))
 		}
 
+		// bodyBytes is valid until releaseBodyBuf; convert to string before releasing.
+		bodyString := string(bodyBytes)
+		releaseBodyBuf(buf)
 		scriptResp := &scripting.ResponseAPI{
-			BodyString: string(bodyBytes),
+			BodyString: bodyString,
 			Headers:    &scripting.ResponseHeaders{Headers: make(map[string]string)},
 		}
 		for k, v := range resp.Header {
