@@ -46,6 +46,8 @@ terminal-centric workflows and fast execution.
 	c.AddCommand(NewSioCmd())
 	c.AddCommand(NewCollectionCmd())
 	c.AddCommand(NewWSCmd())
+	c.AddCommand(NewUICmd())
+
 
 	return c
 }

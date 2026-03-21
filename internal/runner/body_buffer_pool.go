@@ -22,6 +22,10 @@ func acquireBodyBuf() *bytes.Buffer {
 
 // releaseBodyBuf resets and returns buf to the pool.
 func releaseBodyBuf(buf *bytes.Buffer) {
+	if buf.Cap() > 1024*1024 {
+		return
+	}
+	
 	buf.Reset()
 	bodyBufPool.Put(buf)
 }

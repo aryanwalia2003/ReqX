@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"reqx/internal/environment"
 	"reqx/internal/errs"
+	"reqx/internal/history"
 	"reqx/internal/http_executor"
 	"reqx/internal/metrics"
 	"reqx/internal/personas"
@@ -164,7 +166,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 						allMetrics = append(allMetrics, r.Metrics)
 					}
 				}
-				printAndExport(allMetrics, time.Since(t0), exportPath)
+				printAndExport(allMetrics, time.Since(t0), exportPath, filepath.Base(args[0]))
 				return nil
 			}
 
@@ -193,7 +195,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 					allMetrics = append(allMetrics, r.Metrics)
 				}
 
-				printAndExport(allMetrics, time.Since(totalStartTime), exportPath)
+				printAndExport(allMetrics, time.Since(totalStartTime), exportPath, filepath.Base(args[0]))
 				return nil
 			}
 
@@ -237,7 +239,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 				}
 			}
 
-			printAndExport(allMetrics, time.Since(totalStartTime), exportPath)
+			printAndExport(allMetrics, time.Since(totalStartTime), exportPath, filepath.Base(args[0]))
 			return nil
 		},
 	}
@@ -270,9 +272,17 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 
 // Helpers
 
-func printAndExport(allMetrics [][]runner.RequestMetric, elapsed time.Duration, exportPath string) {
+func printAndExport(allMetrics [][]runner.RequestMetric, elapsed time.Duration, exportPath string, collectionName string) {
 	report := metrics.AnalyzeSharded(allMetrics, elapsed, 0)
 	metrics.PrintReport(report)
+
+	if db, err := history.Open(); err == nil {
+		if saveErr := db.SaveRun(collectionName, report); saveErr != nil {
+			color.Yellow("⚠ History save failed: %v\n", saveErr)
+		}
+		db.Close()
+	}
+
 	if exportPath != "" {
 		if err := metrics.ExportJSON(allMetrics, exportPath); err != nil {
 			color.Red("⚠ Export failed: %v\n", err)
@@ -281,6 +291,7 @@ func printAndExport(allMetrics [][]runner.RequestMetric, elapsed time.Duration, 
 		}
 	}
 }
+
 
 func printPhase3Header(cfg runner.SchedulerConfig) {
 	fmt.Println()

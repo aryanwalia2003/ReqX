@@ -11,7 +11,7 @@ func GetDefaultConfigDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".postman-cli"), nil
+	return filepath.Join(home, ".reqx"), nil
 }
 
 // EnsureDirExists creates the directory if it doesn't already exist.

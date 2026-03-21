@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ReqX · History</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3e;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --accent: #6366f1;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', 'Segoe UI', sans-serif; min-height: 100vh; }
+    header { padding: 20px 32px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 1.2rem; font-weight: 600; letter-spacing: -0.02em; }
+    header span { color: var(--accent); font-weight: 700; }
+    .badge { background: var(--accent); color: #fff; font-size: 0.65rem; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+    main { padding: 32px; max-width: 1280px; margin: 0 auto; display: grid; gap: 28px; }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+    .card-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 16px; }
+    canvas { max-height: 260px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    thead th { padding: 8px 12px; text-align: left; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background 0.15s; }
+    tbody tr:hover { background: rgba(99,102,241,0.06); }
+    td { padding: 10px 12px; }
+    td.mono { font-family: monospace; font-size: 0.82rem; color: var(--muted); }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 0.72rem; font-weight: 600; }
+    .pill-green { background: rgba(34,197,94,0.12); color: var(--green); }
+    .pill-red { background: rgba(239,68,68,0.12); color: var(--red); }
+    .pill-yellow { background: rgba(245,158,11,0.12); color: var(--yellow); }
+    .empty { text-align: center; color: var(--muted); padding: 48px; font-size: 0.9rem; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+    .stat-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; }
+    .stat-value { font-size: 1.6rem; font-weight: 700; margin-top: 6px; letter-spacing: -0.03em; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span>ReqX</span> · Test History</h1>
+    <div class="badge">Local</div>
+  </header>
+  <main>
+    <!-- Summary stat cards -->
+    <div class="stats-grid" id="stats-grid"></div>
+
+    <!-- P95 latency trend chart -->
+    <div class="chart-card">
+      <div class="card-title">P95 Latency Trend (ms)</div>
+      <canvas id="chart"></canvas>
+    </div>
+
+    <!-- Runs table -->
+    <div class="chart-card">
+      <div class="card-title">Recent Runs</div>
+      <div id="table-container"><div class="empty">Loading…</div></div>
+    </div>
+  </main>
+
+  <script>
+    async function load() {
+      const res = await fetch('/api/history');
+      const runs = await res.json();
+
+      if (!runs || runs.length === 0) {
+        document.getElementById('table-container').innerHTML = '<div class="empty">No test runs found. Run <code>reqx run …</code> to get started.</div>';
+        return;
+      }
+
+      // --- Stat cards ---
+      const latest = runs[0];
+      const grid = document.getElementById('stats-grid');
+      const cards = [
+        { label: 'Last P95', value: latest.p95_ms + ' ms' },
+        { label: 'Last RPS', value: latest.rps.toFixed(1) },
+        { label: 'Error Rate', value: latest.error_pct.toFixed(1) + '%' },
+        { label: 'Total Runs', value: runs.length },
+      ];
+      grid.innerHTML = cards.map(c => `
+        <div class="stat-card">
+          <div class="stat-label">${c.label}</div>
+          <div class="stat-value">${c.value}</div>
+        </div>`).join('');
+
+      // --- Chart ---
+      const labels = runs.map(r => r.ts.substring(0, 16)).reverse();
+      const data   = runs.map(r => r.p95_ms).reverse();
+      new Chart(document.getElementById('chart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'P95 (ms)',
+            data,
+            borderColor: '#6366f1',
+            backgroundColor: 'rgba(99,102,241,0.08)',
+            borderWidth: 2,
+            pointRadius: 4,
+            pointBackgroundColor: '#6366f1',
+            tension: 0.35,
+            fill: true,
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#64748b', maxTicksLimit: 8 }, grid: { color: '#2a2d3e' } },
+            y: { ticks: { color: '#64748b' }, grid: { color: '#2a2d3e' } },
+          }
+        }
+      });
+
+      // --- Table ---
+      const rows = runs.map(r => {
+        const errClass = r.error_pct > 5 ? 'pill-red' : r.error_pct > 0 ? 'pill-yellow' : 'pill-green';
+        return `<tr style="cursor: pointer" onclick="toggleDetails('${r.id}', this)">
+          <td class="mono">${r.ts.substring(0, 19).replace('T', ' ')}</td>
+          <td>${r.collection}</td>
+          <td>${r.total_reqs}</td>
+          <td>${r.rps.toFixed(1)}</td>
+          <td>${r.p95_ms} ms</td>
+          <td><span class="pill ${errClass}">${r.error_pct.toFixed(1)}%</span></td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('table-container').innerHTML = `
+        <table>
+          <thead><tr>
+            <th>Time</th><th>Collection</th><th>Requests</th><th>RPS</th><th>P95</th><th>Errors</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    async function toggleDetails(id, tr) {
+      if (tr.nextSibling && tr.nextSibling.classList && tr.nextSibling.classList.contains('details-row')) {
+        tr.parentNode.removeChild(tr.nextSibling);
+        return;
+      }
+
+      document.querySelectorAll('.details-row').forEach(e => e.remove());
+
+      const res = await fetch(`/api/history/${id}`);
+      const stats = await res.json();
+      
+      const detailsHtml = stats.map(s => `
+        <div style="display:flex; justify-content:space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.8rem;">
+          <div style="flex:2.5; font-weight: 500">${s.name}</div>
+          <div style="flex:1; color: var(--green)">${s.successes} pass</div>
+          <div style="flex:1; color: var(--red)">${s.failures} fail</div>
+          <div style="flex:1">P95: ${s.p95_ms}ms</div>
+          <div style="flex:1">Avg: ${s.avg_ms}ms</div>
+        </div>
+      `).join('');
+
+      const newTr = document.createElement('tr');
+      newTr.className = 'details-row';
+      newTr.innerHTML = `<td colspan="6" style="background: rgba(0,0,0,0.15); padding: 16px 24px;">
+        <div style="color: var(--muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 8px; font-weight: 600;">Per-Request Breakdown</div>
+        ${detailsHtml}
+      </td>`;
+      
+      tr.parentNode.insertBefore(newTr, tr.nextSibling);
+    }
+
+    load().catch(e => console.error(e));
+  </script>
+</body>
+</html>
