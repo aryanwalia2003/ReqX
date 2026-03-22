@@ -338,12 +338,7 @@ func (cr *CollectionRunner) runScripts(
 }
 
 func (cr *CollectionRunner) replaceVars(input string, ctx *RuntimeContext) string {
-	if ctx == nil || ctx.Environment == nil { return input }
-	out := input
-	for k, v := range ctx.Environment.Variables {
-		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
-	}
-	return out
+	return replaceVarsFast(input,ctx.Environment.Variables)
 }
 
 func (cr *CollectionRunner) resolvedHeaders(raw map[string]string, ctx *RuntimeContext) map[string]string {

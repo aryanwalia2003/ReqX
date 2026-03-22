@@ -1,6 +1,6 @@
 # 🚀 ReqX: High-Performance, Scriptable API Client
 
-**ReqX** is a lightweight, terminal-centric API execution engine built in Go. It is designed for developers who value speed, automation, and a clean CLI experience. ReqX allows you to run Postman-style collections, debug real-time Socket.IO streams, and automate complex test flows without ever leaving your terminal.
+**ReqX** is a lightweight, terminal-centric API execution engine built in Go. Designed for developers who value speed, automation, and a clean CLI experience, ReqX allows you to run Postman-style collections, debug real-time Socket.IO streams, and automate complex load tests—all with the power of an embedded SQLite history engine and a sleek web dashboard.
 
 ---
 
@@ -22,49 +22,65 @@ powershell -ExecutionPolicy ByPass -Command "iwr -useb https://raw.githubusercon
 
 ## ✨ Features at a Glance
 
-- **🚀 Blazing Fast**: Built in Go for near-instant execution of large test suites.
-- **📡 Protocol Support**: Full HTTP/HTTPS support and interactive Socket.IO v4 REPL.
-- **🔐 Stateful Flows**: Automatically handles environment variables and cookie persistence between requests.
-- **📜 JS Scripting**: Use Postman-style JavaScript (`pm.env.set`, `pm.test`) for advanced test logic.
-- **🔄 Multi-Iteration**: Run load tests with a single command and view aggregated performance summaries.
-- **📂 GUI-Free Management**: Add, move, or list requests in your collections directly via the CLI.
-- **🛠 Zero Dependencies**: A single binary that works right out of the box.
+- **🚀 Blazing Fast**: Engineered in Go with `sync.Pool` optimizations and pre-compiled JS bytecode for near-zero overhead.
+- **📊 Local History (v2.1)**: Every test run is automatically indexed in an embedded SQLite database (WAL mode).
+- **📡 Protocol Support**: Full HTTP/HTTPS support and an interactive Socket.IO v4 / WebSocket REPL.
+- **🔐 Stateful Flows**: Automatically handles environment variables, cookie persistence, and auth inheritance.
+- **📜 JS Scripting**: Use familiar Postman-style JavaScript (`pm.env.set`, `pm.test`) for advanced test logic.
+- **🔄 Multi-Iteration**: Run massive load tests with high concurrency and view aggregated HDR Histogram metrics.
+- **🛠 Zero Dependencies**: A single, portable binary that works right out of the box.
+
+---
+
+## 📊 Local History & Dashboard (v2.1)
+
+ReqX now includes a built-in historical tracking system. Never lose a test run again.
+
+### 🖥️ The Web UI
+Launch the embedded dashboard to visualize performance trends, latency heatmaps, and per-request breakdowns:
+```bash
+reqx ui
+```
+*Dashboards are served locally via an embedded web server, keeping your data private and offline.*
+
+### 🔍 Drilldown Analysis
+The UI allows you to click into any historical run to see exactly which requests failed, their P95 latency, and throughput—helping you spot regressions instantly.
+
+---
+
+## 🚀 Performance Architecture
+
+ReqX is built for scale. Our v2.1 core features:
+- **Goja VM Pooling**: Reuses JavaScript runtimes to eliminate GC pressure during heavy load.
+- **Bytecode Caching**: Pre-compiles JS scripts in the planning phase to save CPU cycles per iteration.
+- **HDR Histograms**: Provides high-fidelity latency percentiles (P95, P99) with O(1) performance.
+- **Zero-Write Contention**: SQLite writes are batch-processed on the main thread after runs to ensure 0% impact on test throughput.
 
 ---
 
 ## 📚 Core Command Guide
 
-### 1. `run`: The Execution Engine
+### 1. `run`: The Load Engine
 Execute full collections with variables, cookies, and iterations.
-
 ```bash
 # Basic run with environment
 reqx run collection.json -e dev.json
 
-# Performance Test: 10 iterations with aggregated summary
-reqx run collection.json -n 10
+# Performance Test: 500 iterations with 50 workers
+reqx run collection.json -n 500 -w 50
 
-  # 🔍 Target multiple specific requests by name
-  reqx run my-collection.json -f "Login" -f "Update Profile"
-
-# Verbose Mode: See full request/response headers and bodies
-reqx run collection.json -v
+# Target specific requests by name
+reqx run api.json -f "Login" -f "Update Session"
 ```
 
-### 2. `req`: The Quick Requester
-For ad-hoc, curl-style calls with the power of ReqX variables.
-
+### 2. `ui`: The Dashboard
+Visualize your history and performance trends.
 ```bash
-# Simple GET
-reqx req https://api.github.com/users/aryanwalia2003
-
-# POST with JSON body and environment secrets
-reqx req "{{base_url}}/login" -e prod.json -X POST -d '{"user":"test"}'
+reqx ui  # Opens http://localhost:8090 automatically
 ```
 
-### 3. `sio`: The Socket.IO REPL
-Debug real-time streams interactively.
-
+### 3. `sio` & `ws`: The Real-time REPL
+Debug streams interactively.
 ```bash
 # Connect with a session cookie
 reqx sio http://localhost:7879 -H "Cookie: auth={{token}}"
@@ -72,58 +88,22 @@ reqx sio http://localhost:7879 -H "Cookie: auth={{token}}"
 # Inside the REPL:
 > listen NEW_MESSAGE
 > emit send_chat {"text": "hello"}
-> exit
 ```
 
 ### 4. `collection`: The CLI Editor
-Modify your .json test suites without opening a text editor.
-
+Modify your test suites without leaving the terminal.
 ```bash
-# See request indices
-reqx collection list api.json
-
-# Add a health check
+# Add a health check request
 reqx collection add api.json -n "Health" -u "{{base_url}}/health"
-
-# Move request #10 to position #2
-reqx collection move api.json 10 2
 ```
 
 ---
 
-## 🧬 Advanced Usage & Samples
+## 🤝 Contributing & Architecture
 
-To see the full power of ReqX, generate the high-depth sample files:
-```bash
-reqx sample
-```
-
-### `sample-collection.json` Deep-Dive
-This generated file demonstrates:
-- **Variable Injection**: `{{$timestamp}}` for unique IDs and `{{api_token}}` for dynamic auth.
-- **Auth Inheritance**: Collection-level auth applied to all requests unless overridden.
-- **JavaScript Testing**:
-  ```javascript
-  pm.test("Status is 200", () => pm.response.to.have.status(200));
-  pm.env.set("last_id", pm.response.json().id);
-  ```
-- **Async Sockets**: Start a background listener in your collection that stays alive while subsequent HTTP requests are fired.
-
----
-
-## 🛠 Manual Installation (Windows)
-
-1. Download the latest `reqx.exe` and `install.ps1` from the **Releases** page.
-2. Open PowerShell as **Administrator**.
-3. Run the installer:
-   ```powershell
-   .\install.ps1
-   ```
-4. **Restart your terminal** and type `reqx --help`.
-
----
-
-## 🤝 Contributing
-ReqX is built with a focus on **Consistency** and **Velocity**. If you're contributing, please follow the documentation patterns established in the `docs/` folder.
+ReqX follows a strict **Interface-Driven Design**. If you are contributing, please refer to our architecture guides:
+- [Local History UI Architecture](docs/guides/local_history_ui_architecture.md)
+- [Performance Optimization Guide](docs/guides/hdr-histogram-optimization.md)
+- [System Diagram](docs/diagrams/local_history_ui_diagram.md)
 
 *Developed by Aryan Walia | 2026*
