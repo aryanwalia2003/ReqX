@@ -2,6 +2,7 @@ package planner
 
 import (
 	"reqx/internal/collection"
+	"reqx/internal/dag"
 
 	"github.com/dop251/goja"
 )
@@ -20,4 +21,6 @@ type ExecutionPlan struct {
 	Requests []collection.Request
 	CollectionAuth *collection.Auth
 	CompiledScripts map[ScriptKey]*goja.Program
+	DAG *dag.ScenarioGraph
+	IsDAGNode       bool
 }

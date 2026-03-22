@@ -7,18 +7,19 @@ import (
 	"github.com/fatih/color"
 
 	"reqx/internal/collection"
+	"reqx/internal/dag"
 	"reqx/internal/errs"
 )
 
 // BuildExecutionPlan transforms a raw Collection into an immutable ExecutionPlan
-// by applying injection and filtering as described by cfg.
+// by applying injection, filtering, script compilation, and DAG construction.
 // The original Collection is never mutated.
 func BuildExecutionPlan(coll *collection.Collection, cfg PlanConfig) (*ExecutionPlan, error) {
-	// Start with a fresh copy — never touch coll.Requests directly.
 	requests := make([]collection.Request, len(coll.Requests))
 	copy(requests, coll.Requests)
 
-	requests, err := applyInjection(requests, cfg)
+	var err error
+	requests, err = applyInjection(requests, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -28,19 +29,38 @@ func BuildExecutionPlan(coll *collection.Collection, cfg PlanConfig) (*Execution
 		return nil, err
 	}
 
-	compiled,err := compileScripts(requests)
-	if err!=nil{
+	compiled, err := compileScripts(requests)
+	if err != nil {
 		return nil, err
 	}
 
+	// Build the scenario graph only when at least one request declares depends_on.
+	// dag.Build returns nil, nil when no dependencies are declared, which is the
+	// signal for the runner to fall back to the linear execution path.
+	names := make([]string, len(requests))
+	deps := make([][]string, len(requests))
+	for i, r := range requests {
+		names[i] = r.Name
+		deps[i] = r.DependsOn
+	}
+
+	scenarioGraph, err := dag.Build(names, deps)
+	if err != nil {
+		return nil, err
+	}
+
+	if scenarioGraph != nil {
+		color.Cyan("🔗 Scenario graph detected — parallel execution enabled (%d nodes)\n", len(requests))
+	}
+
 	return &ExecutionPlan{
-		Requests:       requests,
-		CollectionAuth: coll.Auth,
+		Requests:        requests,
+		CollectionAuth:  coll.Auth,
 		CompiledScripts: compiled,
+		DAG:             scenarioGraph,
 	}, nil
 }
 
-// applyInjection inserts a temporary request at the configured index, if set.
 func applyInjection(requests []collection.Request, cfg PlanConfig) ([]collection.Request, error) {
 	if cfg.InjIndex == "" || cfg.InjName == "" || cfg.InjURL == "" {
 		if (cfg.InjName != "" || cfg.InjURL != "") && cfg.InjIndex == "" {
@@ -75,7 +95,6 @@ func applyInjection(requests []collection.Request, cfg PlanConfig) ([]collection
 	return requests, nil
 }
 
-// applyFilters keeps only requests whose name contains one of the filter substrings.
 func applyFilters(requests []collection.Request, cfg PlanConfig) ([]collection.Request, error) {
 	if len(cfg.RequestFilters) == 0 {
 		return requests, nil
@@ -99,7 +118,6 @@ func applyFilters(requests []collection.Request, cfg PlanConfig) ([]collection.R
 	return filtered, nil
 }
 
-// parseHeaders converts "Key: Value" strings into a map.
 func parseHeaders(raw []string) map[string]string {
 	m := make(map[string]string, len(raw))
 	for _, h := range raw {

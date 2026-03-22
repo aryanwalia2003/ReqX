@@ -13,6 +13,8 @@ type Request struct {
 	Events   []SocketIOEvent   `json:"events,omitempty"`
 	WSEvents []WebSocketEvent  `json:"ws_events,omitempty"`
 	Scripts  []Script          `json:"scripts,omitempty"`
+	DependsOn []string `json:"depends_on,omitempty"`
+	Condition string `json:"condition,omitempty"`
 }
 
 //this struct will look like 
@@ -30,5 +32,7 @@ type Request struct {
 // 			"type": "pre",
 // 			"content": "console.log('hello')"
 // 		}
-// 	]
+// 	],
+// 	"depends_on": ["request_name"],
+// 	"condition": "status == 200"
 // }
