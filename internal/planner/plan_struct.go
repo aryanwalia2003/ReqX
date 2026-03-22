@@ -22,5 +22,4 @@ type ExecutionPlan struct {
 	CollectionAuth *collection.Auth
 	CompiledScripts map[ScriptKey]*goja.Program
 	DAG *dag.ScenarioGraph
-	IsDAGNode       bool
 }

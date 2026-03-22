@@ -27,9 +27,7 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 	cr.clearCookiesPerRequest = v
 }
 
-// Run executes all requests in the plan and returns per-request metrics.
-// When plan.DAG is non-nil, execution is delegated to RunDAG which runs
-// independent nodes in parallel. Otherwise the existing sequential path runs.
+// Run dispatches to RunDAG when plan.DAG is non-nil, otherwise runs linearly.
 func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext) ([]RequestMetric, error) {
 	if plan.DAG != nil {
 		return cr.RunDAG(plan, ctx)
@@ -37,16 +35,26 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 	return cr.runLinear(plan, ctx)
 }
 
-// runLinear is the original sequential execution path, extracted verbatim.
+// runLinear executes requests sequentially in plan order.
+// When called as a DAG sub-node (plan.DAG == nil, ctx is a node clone) the
+// async stop/wait is managed by the parent RunDAG, so this function must not
+// close AsyncStop or call AsyncWG.Wait() itself. The distinction is made by
+// checking whether ctx owns the AsyncStop channel — which is always true for
+// top-level contexts and always false for clones produced by CloneForNode,
+// because CloneForNode shares the parent's channel.
+//
+// In practice: top-level run → defer closes stop and waits.
+//              DAG sub-node  → no defer here; parent RunDAG owns cleanup.
 func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeContext) ([]RequestMetric, error) {
 	verboseColor := color.New(color.FgYellow)
 	timingColor := color.New(color.FgHiCyan)
 
 	metrics := make([]RequestMetric, 0, len(plan.Requests))
-	
-	// If it's a sub-node in a DAG, we DON'T wait here. 
-	// The parent RunDAG will handle the final cleanup once ALL levels finish.
-	if !plan.IsDAGNode {
+
+	// Only the context that *owns* AsyncStop should close it and wait.
+	// A clone produced by CloneForNode shares the parent's channel but does
+	// not own it. We detect ownership by the isOwner field set in the ctor.
+	if ctx.ownsAsyncStop {
 		defer func() {
 			if cr.verbosity >= VerbosityNormal {
 				color.Cyan("\nCollection run finished. Waiting for background connections...\n")
@@ -349,9 +357,13 @@ func (cr *CollectionRunner) resolveAuth(reqAuth, collAuth *collection.Auth, ctx 
 		return nil
 	}
 	resolved := &collection.Auth{
-		Type: src.Type, Token: cr.replaceVars(src.Token, ctx),
-		Username: cr.replaceVars(src.Username, ctx), Password: cr.replaceVars(src.Password, ctx),
-		Key: cr.replaceVars(src.Key, ctx), Value: cr.replaceVars(src.Value, ctx), In: src.In,
+		Type:     src.Type,
+		Token:    cr.replaceVars(src.Token, ctx),
+		Username: cr.replaceVars(src.Username, ctx),
+		Password: cr.replaceVars(src.Password, ctx),
+		Key:      cr.replaceVars(src.Key, ctx),
+		Value:    cr.replaceVars(src.Value, ctx),
+		In:       src.In,
 	}
 	if src.Cookies != nil {
 		resolved.Cookies = make(map[string]string, len(src.Cookies))

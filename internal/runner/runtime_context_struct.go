@@ -12,6 +12,7 @@ type RuntimeContext struct {
 	AsyncWG         *sync.WaitGroup          // Shared across DAG parallel nodes to track background tasks
 	AsyncStop       chan struct{}            // Shared across DAG parallel nodes to signal background stop
 	AsyncStopOnce   sync.Once                // Ensures AsyncStop is closed exactly once
+	ownsAsyncStop 	bool						//this is a boolean that will tell us if the current context owns the async stop
 }
 
 //this struct looks like 
