@@ -15,6 +15,8 @@ type Request struct {
 	Scripts  []Script          `json:"scripts,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	Condition string `json:"condition,omitempty"`
+	Extract map[string]string `json:"extract,omitempty"`
+
 }
 
 //this struct will look like 

@@ -19,7 +19,7 @@ type RuntimeContext struct {
 // {
 // 	"globalVariables": {
 // 		"key": "value"
-// 	},
+				// 	},
 // 	"environment": {
 // 		"name": "dev",
 // 		"variables": {

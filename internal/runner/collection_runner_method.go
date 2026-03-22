@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"reqx/internal/collection"
+	"reqx/internal/dag"
 	"reqx/internal/http_executor"
 	"reqx/internal/planner"
 	"reqx/internal/scripting"
@@ -35,25 +36,14 @@ func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext
 	return cr.runLinear(plan, ctx)
 }
 
-// runLinear executes requests sequentially in plan order.
-// When called as a DAG sub-node (plan.DAG == nil, ctx is a node clone) the
-// async stop/wait is managed by the parent RunDAG, so this function must not
-// close AsyncStop or call AsyncWG.Wait() itself. The distinction is made by
-// checking whether ctx owns the AsyncStop channel — which is always true for
-// top-level contexts and always false for clones produced by CloneForNode,
-// because CloneForNode shares the parent's channel.
-//
-// In practice: top-level run → defer closes stop and waits.
-//              DAG sub-node  → no defer here; parent RunDAG owns cleanup.
 func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeContext) ([]RequestMetric, error) {
 	verboseColor := color.New(color.FgYellow)
 	timingColor := color.New(color.FgHiCyan)
 
 	metrics := make([]RequestMetric, 0, len(plan.Requests))
 
-	// Only the context that *owns* AsyncStop should close it and wait.
-	// A clone produced by CloneForNode shares the parent's channel but does
-	// not own it. We detect ownership by the isOwner field set in the ctor.
+	// Only the context that owns AsyncStop closes it and waits.
+	// DAG node clones have ownsAsyncStop=false so they never close the channel.
 	if ctx.ownsAsyncStop {
 		defer func() {
 			if cr.verbosity >= VerbosityNormal {
@@ -79,7 +69,6 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 			metrics = cr.runWebSocket(req, urlStr, ctx, ctx.AsyncWG, metrics, ctx.AsyncStop, plan, reqIdx)
 			continue
 		}
-
 		if strings.ToUpper(req.Protocol) == "SOCKETIO" {
 			metrics = cr.runSocketIO(req, urlStr, ctx, ctx.AsyncWG, metrics, ctx.AsyncStop, plan, reqIdx)
 			continue
@@ -142,8 +131,11 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 				fmt.Printf("Request Failed: %v\n", err)
 			}
 			metrics = append(metrics, RequestMetric{
-				Name: req.Name, Protocol: "HTTP",
-				Duration: totalTime, Error: err, ErrorMsg: err.Error(),
+				Name:      req.Name,
+				Protocol:  "HTTP",
+				Duration:  totalTime,
+				Error:     err,
+				ErrorMsg:  err.Error(),
 				BytesSent: int64(len(reqBody)),
 			})
 			continue
@@ -177,6 +169,16 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 			m.ErrorMsg = resp.Status
 		}
 		metrics = append(metrics, m)
+
+		// ── Extract declared variables from response body ─────────────────────
+		// Only runs when the request has extract entries AND the response was
+		// successful enough to have a JSON body worth parsing.
+		// bodyBytes is still valid here — buf has not been released yet.
+		// In DAG mode ctx is a node clone, so writes are race-free and will be
+		// merged back into the shared environment after the level barrier.
+		if len(req.Extract) > 0 && resp.StatusCode < 400 {
+			applyExtracts(req.Extract, bodyBytes, ctx, req.Name, cr.verbosity)
+		}
 
 		if cr.verbosity >= VerbosityFull {
 			var dnsTime, tcpTime, tlsTime, transferTime time.Duration
@@ -243,6 +245,7 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 
 		bodyString := string(bodyBytes)
 		releaseBodyBuf(buf)
+
 		scriptResp := &scripting.ResponseAPI{
 			BodyString: bodyString,
 			Headers:    &scripting.ResponseHeaders{Headers: make(map[string]string)},
@@ -258,6 +261,30 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 	return metrics, nil
 }
 
+// applyExtracts evaluates each JSONPath in extracts against body and writes
+// the results into ctx.Environment. Extraction errors are printed as warnings
+// and never abort the run — a missing field is non-fatal.
+//
+// bodyBytes must still be alive (buf not yet released) when this is called.
+// In DAG mode ctx is a node clone so writes are race-free.
+func applyExtracts(extracts map[string]string, bodyBytes []byte, ctx *RuntimeContext, reqName string, verbosity int) {
+	results, errs := dag.ExtractAll(bodyBytes, extracts)
+
+	for _, err := range errs {
+		color.Yellow("⚠ [EXTRACT] %s: %v\n", reqName, err)
+	}
+
+	if ctx.Environment == nil {
+		return
+	}
+	for k, v := range results {
+		ctx.Environment.Set(k, v)
+		if verbosity >= VerbosityNormal {
+			color.Cyan("[EXTRACT] %s → %s = %q\n", reqName, k, v)
+		}
+	}
+}
+
 // ── WebSocket helper ──────────────────────────────────────────────────────────
 
 func (cr *CollectionRunner) runWebSocket(
@@ -269,7 +296,10 @@ func (cr *CollectionRunner) runWebSocket(
 	headers := cr.resolvedHeaders(req.Headers, ctx)
 	var events []collection.WebSocketEvent
 	for _, ev := range req.WSEvents {
-		events = append(events, collection.WebSocketEvent{Type: ev.Type, Payload: cr.replaceVars(ev.Payload, ctx)})
+		events = append(events, collection.WebSocketEvent{
+			Type:    ev.Type,
+			Payload: cr.replaceVars(ev.Payload, ctx),
+		})
 	}
 	start := time.Now()
 	if req.Async {
@@ -283,7 +313,10 @@ func (cr *CollectionRunner) runWebSocket(
 		}(req.Name, urlStr, headers, events)
 		color.Cyan("Waiting for WebSocket to connect...\n")
 		err := <-readyChan
-		metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "WS", Duration: time.Since(start), StatusString: "ASYNC", Error: err})
+		metrics = append(metrics, RequestMetric{
+			Name: req.Name, Protocol: "WS",
+			Duration: time.Since(start), StatusString: "ASYNC", Error: err,
+		})
 		if err != nil {
 			color.Yellow("⚠ Background WS failed: %v. Continuing...\n", err)
 		} else {
@@ -293,7 +326,10 @@ func (cr *CollectionRunner) runWebSocket(
 		return metrics
 	}
 	err := cr.weExecutor.Execute(urlStr, headers, events, nil, nil)
-	metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "WS", Duration: time.Since(start), StatusString: "SYNC", Error: err})
+	metrics = append(metrics, RequestMetric{
+		Name: req.Name, Protocol: "WS",
+		Duration: time.Since(start), StatusString: "SYNC", Error: err,
+	})
 	if err != nil {
 		fmt.Printf("WS request %s failed: %v\n", req.Name, err)
 	}
@@ -312,7 +348,11 @@ func (cr *CollectionRunner) runSocketIO(
 	headers := cr.resolvedHeaders(req.Headers, ctx)
 	var events []collection.SocketIOEvent
 	for _, ev := range req.Events {
-		events = append(events, collection.SocketIOEvent{Type: ev.Type, Name: cr.replaceVars(ev.Name, ctx), Payload: cr.replaceVars(ev.Payload, ctx)})
+		events = append(events, collection.SocketIOEvent{
+			Type:    ev.Type,
+			Name:    cr.replaceVars(ev.Name, ctx),
+			Payload: cr.replaceVars(ev.Payload, ctx),
+		})
 	}
 	start := time.Now()
 	if req.Async {
@@ -326,7 +366,10 @@ func (cr *CollectionRunner) runSocketIO(
 		}(req.Name, urlStr, headers, events)
 		color.Cyan("Waiting for Socket.IO to connect...\n")
 		err := <-readyChan
-		metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "SOCKET", Duration: time.Since(start), StatusString: "ASYNC", Error: err})
+		metrics = append(metrics, RequestMetric{
+			Name: req.Name, Protocol: "SOCKET",
+			Duration: time.Since(start), StatusString: "ASYNC", Error: err,
+		})
 		if err != nil {
 			color.Yellow("⚠ Background Socket failed: %v. Continuing...\n", err)
 		} else {
@@ -336,7 +379,10 @@ func (cr *CollectionRunner) runSocketIO(
 		return metrics
 	}
 	err := cr.sioExecutor.Execute(urlStr, headers, events, nil, nil)
-	metrics = append(metrics, RequestMetric{Name: req.Name, Protocol: "SOCKET", Duration: time.Since(start), StatusString: "SYNC", Error: err})
+	metrics = append(metrics, RequestMetric{
+		Name: req.Name, Protocol: "SOCKET",
+		Duration: time.Since(start), StatusString: "SYNC", Error: err,
+	})
 	if err != nil {
 		fmt.Printf("SIO request %s failed: %v\n", req.Name, err)
 	} else {
