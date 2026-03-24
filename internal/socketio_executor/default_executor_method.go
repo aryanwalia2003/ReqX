@@ -52,11 +52,12 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 		reqHeaders.Add(k, v)
 	}
 
-	fmt.Printf("Connecting to Socket.IO Server (v4): %s\n", u.String())
+	if !e.quiet {
+		fmt.Printf("Connecting to Socket.IO Server (v4): %s\n", u.String())
+	}
 
 	// 3. Connect via raw WebSocket
-	dialer := websocket.DefaultDialer
-	conn, _, err := dialer.Dial(u.String(), reqHeaders)
+	conn, _, err := sharedDialer.Dial(u.String(), reqHeaders)
 	if err != nil {
 		if readyChan != nil {
 			readyChan <- errs.Wrap(err, errs.KindInternal, "Failed to connect to websocket")
@@ -74,7 +75,9 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 		if ev.Type == "listen" {
 			expectedListeners++
 			listenTargets[ev.Name]++
-			fmt.Printf("Registered listener for event: '%s'\n", ev.Name)
+			if !e.quiet {
+				fmt.Printf("Registered listener for event: '%s'\n", ev.Name)
+			}
 		}
 	}
 
@@ -99,7 +102,9 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 				conn.WriteMessage(websocket.TextMessage, []byte("3"))
 			} else if strings.HasPrefix(msgStr, "40") {
 				// Socket.IO Connected
-				fmt.Println("Connected successfully.")
+				if !e.quiet {
+					fmt.Println("Connected successfully.")
+				}
 				select {
 				case <-connected:
 				default:
@@ -125,13 +130,14 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 						}
 
 						if isListening {
-							payload := ""
-
-							if len(arr) > 1 {
-								pb, _ := json.Marshal(arr[1])
-								payload = string(pb)
+							if !e.quiet {
+								payload := ""
+								if len(arr) > 1 {
+									pb, _ := json.Marshal(arr[1])
+									payload = string(pb)
+								}
+								fmt.Printf("\n[RECEIVED] Event: '%s' | Data: %v\n", eventName, payload)
 							}
-							fmt.Printf("\n[RECEIVED] Event: '%s' | Data: %v\n", eventName, payload)
 
 							// Only decrement and track target counts if we are in Synchronous mode
 							if stopChan == nil {
@@ -169,7 +175,9 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	// 6. Emit predefined events
 	for _, ev := range events {
 		if ev.Type == "emit" {
-			fmt.Printf("[EMIT] Event: '%s' | Payload: %s\n", ev.Name, ev.Payload)
+			if !e.quiet {
+				fmt.Printf("[EMIT] Event: '%s' | Payload: %s\n", ev.Name, ev.Payload)
+			}
 
 			var payload interface{} = ""
 			if ev.Payload != "" {
@@ -190,28 +198,45 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	// ========================================================
 	// 7. WAIT LOGIC (Async vs Sync)
 	// ========================================================
-	
+
 	// ASYNC MODE: Wait indefinitely until Runner sends stop signal
 	if stopChan != nil {
 		<-stopChan
-		fmt.Println("\nClosing Background Socket.IO connection...")
+		if !e.quiet {
+			fmt.Println("\nClosing Background Socket.IO connection...")
+		}
 		return nil
 	}
 
 	// SYNC MODE: Wait for specific events to arrive
-	if expectedListeners > 0 {
-		fmt.Printf("Waiting up to %v for expected listener(s)...\n", e.timeout)
+	mu.Lock()
+	remaining := expectedListeners
+	mu.Unlock()
+
+	if remaining > 0 {
+		if !e.quiet {
+			fmt.Printf("Waiting up to %v for expected listener(s)...\n", e.timeout)
+		}
 		select {
 		case <-done:
-			fmt.Println("All expected events received.")
+			if !e.quiet {
+				fmt.Println("All expected events received.")
+			}
 		case <-time.After(e.timeout):
-			fmt.Printf("Timeout reached! Missed %d event(s).\n", expectedListeners)
+			if !e.quiet {
+				mu.Lock()
+				missed := expectedListeners
+				mu.Unlock()
+				fmt.Printf("Timeout reached! Missed %d event(s).\n", missed)
+			}
 		}
 	} else {
 		// Just wait a tiny bit to ensure final emits go out before closing the conn
 		time.Sleep(1 * time.Second)
 	}
 
-	fmt.Println("Closing Socket.IO connection.")
+	if !e.quiet {
+		fmt.Println("Closing Socket.IO connection.")
+	}
 	return nil
 }

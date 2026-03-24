@@ -1,6 +1,7 @@
 package http_executor
 
 import (
+	"net"
 	"net/http"
 	"time"
 )
@@ -10,9 +11,15 @@ import (
 // (and TLS sessions) be reused across iterations, eliminating the
 // per-request handshake overhead that kills performance at high concurrency.
 var globalTransport = &http.Transport{
-	MaxIdleConns:        10000,
-	MaxIdleConnsPerHost: 2000,
-	IdleConnTimeout:     90 * time.Second,
-	DisableCompression:  false,
-	ForceAttemptHTTP2:   true,
+	Proxy: http.ProxyFromEnvironment,
+	DialContext: (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	ForceAttemptHTTP2:     false, // Disabled to prevent MAX_CONCURRENT_STREAMS exhaustion at ALB
+	MaxIdleConns:          10000,
+	MaxIdleConnsPerHost:   10000,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
 }

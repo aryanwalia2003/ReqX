@@ -34,9 +34,15 @@ func (g *GojaRunner) Execute(
 		return nil
 	}
 
-	vm := g.vm
+	vm := g.pool.Get().(*goja.Runtime)
+	defer g.pool.Put(vm)
 
-	// Inject per-call bindings.
+	// Always clear injected bindings before returning, even on error or panic.
+	// This prevents pm/console from one iteration leaking into the next.
+	defer func() {
+		vm.Set("pm", goja.Undefined())
+		vm.Set("console", goja.Undefined())
+	}()
 	vm.Set("console", &ConsoleAPI{})
 
 	testResults := make(TestResults, 0)
@@ -55,11 +61,6 @@ func (g *GojaRunner) Execute(
 		src := strings.Join(script.Exec, "\n")
 		_, runErr = vm.RunString(src)
 	}
-
-	// Always clear injected bindings before returning, even on error.
-	// This prevents pm/console from one iteration leaking into the next.
-	vm.Set("pm", goja.Undefined())
-	vm.Set("console", goja.Undefined())
 
 	if runErr != nil {
 		return errs.Wrap(runErr, errs.KindInternal, "script execution failed")

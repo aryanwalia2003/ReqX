@@ -33,8 +33,14 @@ func NewCollectionRunner(exec *http_executor.DefaultExecutor, sio socketio_execu
 }
 
 // SetVerbosity controls how much per-request output the runner emits.
+// When v == VerbosityQuiet, it also silences all per-event console output
+// from the Socket.IO and WebSocket executors, eliminating the OS-level
+// syscall overhead that causes CPU spikes under high concurrency.
 func (cr *CollectionRunner) SetVerbosity(v int) {
 	cr.verbosity = v
+	quiet := v <= VerbosityQuiet
+	cr.sioExecutor.SetQuiet(quiet)
+	cr.weExecutor.SetQuiet(quiet)
 }
 
 // SetVerbose is kept for backward compatibility; it maps to VerbosityFull.

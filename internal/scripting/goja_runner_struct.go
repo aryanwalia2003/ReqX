@@ -1,8 +1,12 @@
 package scripting
 
-import "github.com/dop251/goja"
+import (
+	"sync"
+)
 
 // GojaRunner is the concrete implementation of ScriptRunner using the goja JS engine.
-type GojaRunner struct{
-	vm *goja.Runtime
+// It uses a sync.Pool of *goja.Runtime to allow parallel execution (DAG) without
+// concurrent map access panics or heavy allocation overhead.
+type GojaRunner struct {
+	pool *sync.Pool
 }

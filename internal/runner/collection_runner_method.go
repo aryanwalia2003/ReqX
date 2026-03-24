@@ -277,9 +277,15 @@ func applyExtracts(extracts map[string]string, bodyBytes []byte, ctx *RuntimeCon
 	if ctx.Environment == nil {
 		return
 	}
-	for k, v := range results {
+
+	// Always iterate over ALL requested extraction keys.
+	// If a key successfully extracted, `results` has the new value.
+	// If it failed (present in `errs`), `results[k]` will be "" (the zero value),
+	// explicitly overwriting any stale data from previous iterations to prevent 401s.
+	for k := range extracts {
+		v := results[k]
 		ctx.Environment.Set(k, v)
-		if verbosity >= VerbosityNormal {
+		if v != "" && verbosity >= VerbosityNormal {
 			color.Cyan("[EXTRACT] %s → %s = %q\n", reqName, k, v)
 		}
 	}
@@ -345,6 +351,15 @@ func (cr *CollectionRunner) runSocketIO(
 	metrics []RequestMetric, stop chan struct{},
 	plan *planner.ExecutionPlan, reqIdx int,
 ) []RequestMetric {
+	// In persistent-connection mode (scheduler VU), skip re-dialling a URL
+	// that is already connected from a previous iteration.
+	if req.Async && ctx.PersistConnections && ctx.IsConnected(urlStr) {
+		metrics = append(metrics, RequestMetric{
+			Name: req.Name, Protocol: "SOCKET",
+			StatusString: "REUSED",
+		})
+		return metrics
+	}
 	headers := cr.resolvedHeaders(req.Headers, ctx)
 	var events []collection.SocketIOEvent
 	for _, ev := range req.Events {
@@ -374,6 +389,9 @@ func (cr *CollectionRunner) runSocketIO(
 			color.Yellow("⚠ Background Socket failed: %v. Continuing...\n", err)
 		} else {
 			color.Green("Background Socket ready!\n")
+			if ctx.PersistConnections {
+				ctx.MarkConnected(urlStr)
+			}
 		}
 		cr.runScripts("test", req.Scripts, ctx, nil, plan, reqIdx)
 		return metrics

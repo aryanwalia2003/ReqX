@@ -2,8 +2,10 @@ package websocket_executor
 
 import "reqx/internal/collection"
 
-type WebSocketExecutor interface{
-	Execute(url string, headers map[string]string, events []collection.WebSocketEvent, readyChan chan error, stopChan chan struct{})error
+type WebSocketExecutor interface {
+	Execute(url string, headers map[string]string, events []collection.WebSocketEvent, readyChan chan error, stopChan chan struct{}) error
+	// SetQuiet suppresses all per-message console output when set to true.
+	SetQuiet(bool)
 }
 
 //websocket executor interface defines the contract for executing websocket requests, it says websocket request will have a url, headers, events, ready channel and stop channel

@@ -37,10 +37,14 @@ func (cr *CollectionRunner) RunDAG(plan *planner.ExecutionPlan, ctx *RuntimeCont
 	evalCtxs := make([]dag.EvalContext, n)
 	skipped := make([]bool, n)
 
-	// Top-level RunDAG owns the async connection lifecycle.
-	// All sub-nodes share ctx.AsyncWG / ctx.AsyncStop, so background WS/SIO
-	// goroutines started inside any node goroutine are tracked here.
+	// Top-level RunDAG owns the async connection lifecycle ONLY when
+	// PersistConnections is false (single-run or WorkerPool mode).
+	// In scheduler VU mode, the worker goroutine in scheduler_worker_method.go
+	// owns the stop/wait so sockets survive across iterations.
 	defer func() {
+		if ctx.PersistConnections {
+			return // scheduler worker will close & wait
+		}
 		if cr.verbosity >= VerbosityNormal {
 			color.Cyan("\n[DAG] All levels done. Waiting for background connections...\n")
 		}

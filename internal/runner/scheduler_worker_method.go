@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"reqx/internal/http_executor"
@@ -11,6 +12,8 @@ import (
 // spawnWorker launches one self-driven virtual user (VU).
 // The worker sets up isolated state once (env clone, persona, cookie jar),
 // then loops executing the plan until ctx is cancelled.
+// Sockets are persistent across iterations — they are only closed when the
+// worker goroutine itself exits, eliminating per-iteration TLS handshakes.
 func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 	s.wg.Add(1)
 	go func() {
@@ -18,6 +21,7 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 
 		// Per-worker isolated state (persist across iterations).
 		rtCtx := NewRuntimeContext()
+		rtCtx.PersistConnections = true // sockets live for the worker lifetime
 		if s.cfg.BaseEnv != nil {
 			rtCtx.SetEnvironment(s.cfg.BaseEnv.Clone())
 		}
@@ -36,6 +40,12 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 		if s.cfg.ClearCookies {
 			engine.SetClearCookiesPerRequest(true)
 		}
+
+		// Worker owns the AsyncStop lifecycle — close it only when the goroutine exits.
+		defer func() {
+			rtCtx.AsyncStopOnce.Do(func() { close(rtCtx.AsyncStop) })
+			rtCtx.AsyncWG.Wait()
+		}()
 
 		for {
 			// Stage-controlled idling (no job queue contention).
@@ -57,7 +67,14 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 
 			s.activeWorkers.Store(s.desiredWorkers.Load())
 
-			iter := int(s.completedIterations.Add(1)) // unique-ish monotonically increasing index
+			// Reset the AsyncStop channel between iterations so each DAG run
+			// gets a fresh channel. Sockets from the previous iteration are
+			// still alive listening on the OLD channel; they are unaffected.
+			rtCtx.AsyncStop = make(chan struct{})
+			rtCtx.AsyncStopOnce = new(sync.Once)
+			rtCtx.AsyncWG = new(sync.WaitGroup)
+
+			iter := int(s.completedIterations.Add(1))
 			metrics, err := engine.Run(s.cfg.Plan, rtCtx)
 			if err != nil {
 				s.failedIterations.Add(1)
@@ -73,8 +90,6 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 				if desired < 1 {
 					desired = 1
 				}
-				// Per-worker interval that approximates cfg.RPS overall:
-				// perWorkerRPS ≈ cfg.RPS / desired => interval ≈ desired/cfg.RPS seconds.
 				interval := time.Duration(float64(time.Second) * float64(desired) / s.cfg.RPS)
 				if interval > 0 {
 					select {
@@ -87,6 +102,7 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 		}
 	}()
 }
+
 
 func (s *Scheduler) wake() <-chan struct{} {
 	s.wakeMu.Lock()

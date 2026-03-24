@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +33,7 @@ func NewRunCmd() *cobra.Command {
 	var duration time.Duration
 	var rps float64
 	var stages, personasPath string
+	var cpuProfile, memProfile string
 
 	var injIndex, injName, injMethod, injURL, injBody string
 	var injHeaders []string
@@ -64,11 +67,32 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
   reqx run my-collection.json -n 100 --export results.json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cpuProfile != "" {
+				f, err := os.Create(cpuProfile)
+				if err != nil {
+					return err
+				}
+				pprof.StartCPUProfile(f)
+				defer pprof.StopCPUProfile()
+			}
+
 			if iterations < 1 {
 				iterations = 1
 			}
 
 			totalStartTime := time.Now()
+
+			defer func() {
+				if memProfile != "" {
+					f, err := os.Create(memProfile)
+					if err != nil {
+						color.Red("Could not create memory profile: %v", err)
+						return
+					}
+					defer f.Close()
+					pprof.WriteHeapProfile(f)
+				}
+			}()
 
 			collBytes, err := storage.ReadJSONFile(args[0])
 			if err != nil {
@@ -249,6 +273,9 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 	c.Flags().Float64Var(&rps, "rps", 0, "Max requests per second (0 = unlimited)")
 	c.Flags().StringVar(&stages, "stages", "", `Ramp plan, e.g. "10s:5,30s:20,10s:0"`)
 	c.Flags().StringVar(&personasPath, "personas", "", "CSV file of personas (columns become {{persona.<col>}})")
+
+	c.Flags().StringVar(&cpuProfile, "cpuprofile", "", "Write cpu profile to file")
+	c.Flags().StringVar(&memProfile, "memprofile", "", "Write memory profile to file")
 
 	c.Flags().StringVar(&injIndex, "inject-index", "", "1-based position to insert a temporary request")
 	c.Flags().StringVar(&injName, "inject-name", "", "Name of the temporary request")
