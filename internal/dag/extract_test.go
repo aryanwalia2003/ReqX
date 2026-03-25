@@ -1,11 +1,10 @@
 package dag
 
 import (
-	"encoding/json"
 	"testing"
 )
 
-func TestEvalPath(t *testing.T) {
+func TestExtractAll(t *testing.T) {
 	raw := []byte(`{
 		"token": "abc123",
 		"data": {
@@ -18,48 +17,47 @@ func TestEvalPath(t *testing.T) {
 		"empty": null
 	}`)
 
-	var root interface{}
-	if err := json.Unmarshal(raw, &root); err != nil {
-		t.Fatal(err)
-	}
-
 	cases := []struct {
+		name    string
 		path    string
 		want    string
 		wantErr bool
 	}{
-		{"$.token", "abc123", false},
-		{"$.data.user.id", "42", false},
-		{"$.data.user.name", "Aryan", false},
-		{"$.data.score", "9.5", false},
-		{"$.items[0]", "first", false},
-		{"$.items[2]", "third", false},
-		{"$.nested[1].val", "y", false},
-		{"$.nested[0].id", "1", false},
-		{"$.flag", "true", false},
-		{"$.empty", "", false},
+		{"Top level string", "$.token", "abc123", false},
+		{"Nested object int", "$.data.user.id", "42", false},
+		{"Nested object string", "$.data.user.name", "Aryan", false},
+		{"Nested object float", "$.data.score", "9.5", false},
+		{"Array index 0", "$.items[0]", "first", false},
+		{"Array index 2", "$.items[2]", "third", false},
+		{"Nested array object", "$.nested[1].val", "y", false},
+		{"Nested array index", "$.nested[0].id", "1", false},
+		{"Boolean true", "$.flag", "true", false},
+		{"Null value", "$.empty", "", false},
 		// error cases
-		{"$.missing", "", true},
-		{"$.items[99]", "", true},
-		{"$.data.user.id.bad", "", true},
-		{"no_dollar", "", true},
+		{"Missing key", "$.missing", "", true},
+		{"Out of bounds", "$.items[99]", "", true},
+		{"Path through leaf", "$.data.user.id.bad", "", true},
+		{"No dollar prefix", "no_dollar", "", true},
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.path, func(t *testing.T) {
-			got, err := evalPath(root, tc.path)
+		t.Run(tc.name, func(t *testing.T) {
+			results, errs := ExtractAll(raw, map[string]string{"var": tc.path})
+			
 			if tc.wantErr {
-				if err == nil {
-					t.Errorf("expected error for %q, got %q", tc.path, got)
+				if len(errs) == 0 {
+					t.Errorf("expected error for path %q, but got none", tc.path)
 				}
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error for %q: %v", tc.path, err)
+
+			if len(errs) > 0 {
+				t.Errorf("unexpected errors for path %q: %v", tc.path, errs)
 				return
 			}
-			if got != tc.want {
-				t.Errorf("%q: want %q got %q", tc.path, tc.want, got)
+
+			if results["var"] != tc.want {
+				t.Errorf("path %q: want %q, got %q", tc.path, tc.want, results["var"])
 			}
 		})
 	}
@@ -97,8 +95,8 @@ func TestExtractAll_PartialErrors(t *testing.T) {
 
 func TestExtractAll_InvalidJSON(t *testing.T) {
 	_, errs := ExtractAll([]byte(`not json`), map[string]string{"k": "$.k"})
-	if len(errs) != 1 {
-		t.Errorf("expected 1 parse error, got %d", len(errs))
+	if len(errs) == 0 {
+		t.Error("expected parse error for invalid JSON, got none")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
 
 	"reqx/internal/collection"
 	"reqx/internal/errs"
@@ -67,7 +68,8 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 	defer conn.Close()
 
 	// 4. State Management for Listeners
-	var mu sync.Mutex
+	var mu sync.Mutex    // Guards expectedListeners and listenTargets
+	var writeMu sync.Mutex // Guards conn.WriteMessage (gorilla forbids concurrent writers)
 	expectedListeners := 0
 	listenTargets := make(map[string]int)
 
@@ -96,10 +98,14 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 
 			if strings.HasPrefix(msgStr, "0") {
 				// Engine.IO Open -> Send Socket.IO Connect (40)
+				writeMu.Lock()
 				conn.WriteMessage(websocket.TextMessage, []byte("40"))
+				writeMu.Unlock()
 			} else if strings.HasPrefix(msgStr, "2") {
 				// Engine.IO Ping -> Reply with Pong (3)
+				writeMu.Lock()
 				conn.WriteMessage(websocket.TextMessage, []byte("3"))
+				writeMu.Unlock()
 			} else if strings.HasPrefix(msgStr, "40") {
 				// Socket.IO Connected
 				if !e.quiet {
@@ -116,46 +122,44 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 			} else if strings.HasPrefix(msgStr, "42") {
 				// Incoming Event
 				dataStr := msgStr[2:]
-				var arr []interface{}
-				if json.Unmarshal([]byte(dataStr), &arr) == nil && len(arr) > 0 {
-					if eventName, ok := arr[0].(string); ok {
-						mu.Lock()
-						isListening := false
+				
+				// Use gjson to sniff the event name without unmarshalling the entire array
+				res := gjson.Get(dataStr, "0")
+				if res.Exists() {
+					eventName := res.String()
+					mu.Lock()
+					isListening := false
 
-						for _, ev := range events {
-							if ev.Type == "listen" && ev.Name == eventName {
-								isListening = true
-								break
-							}
+					for _, ev := range events {
+						if ev.Type == "listen" && ev.Name == eventName {
+							isListening = true
+							break
+						}
+					}
+
+					if isListening {
+						if !e.quiet {
+							// Extract payload as raw string from the array's second element
+							payload := gjson.Get(dataStr, "1").Raw
+							fmt.Printf("\n[RECEIVED] Event: '%s' | Data: %v\n", eventName, payload)
 						}
 
-						if isListening {
-							if !e.quiet {
-								payload := ""
-								if len(arr) > 1 {
-									pb, _ := json.Marshal(arr[1])
-									payload = string(pb)
-								}
-								fmt.Printf("\n[RECEIVED] Event: '%s' | Data: %v\n", eventName, payload)
-							}
-
-							// Only decrement and track target counts if we are in Synchronous mode
-							if stopChan == nil {
-								if needed := listenTargets[eventName]; needed > 0 {
-									listenTargets[eventName]--
-									expectedListeners--
-									if expectedListeners == 0 {
-										select {
-										case <-done:
-										default:
-											close(done)
-										}
+						// Only decrement and track target counts if we are in Synchronous mode
+						if stopChan == nil {
+							if needed := listenTargets[eventName]; needed > 0 {
+								listenTargets[eventName]--
+								expectedListeners--
+								if expectedListeners == 0 {
+									select {
+									case <-done:
+									default:
+										close(done)
 									}
 								}
 							}
 						}
-						mu.Unlock()
 					}
+					mu.Unlock()
 				}
 			}
 		}
@@ -179,19 +183,25 @@ func (e *DefaultSocketIOExecutor) Execute(rawURL string, headers map[string]stri
 				fmt.Printf("[EMIT] Event: '%s' | Payload: %s\n", ev.Name, ev.Payload)
 			}
 
-			var payload interface{} = ""
-			if ev.Payload != "" {
-				if err := json.Unmarshal([]byte(ev.Payload), &payload); err != nil {
-					payload = ev.Payload
-				}
+			nameBytes, _ := json.Marshal(ev.Name)
+			var finalMessage string
+
+			if ev.Payload == "" {
+				finalMessage = "42[" + string(nameBytes) + "]"
+			} else if gjson.Valid(ev.Payload) {
+				// If the payload is perfectly valid JSON (object, array, number, quoted string, boolean, null),
+				// embed it directly.
+				finalMessage = "42[" + string(nameBytes) + "," + ev.Payload + "]"
+			} else {
+				// Otherwise, it was just unquoted text; JSON encode it as a simple string.
+				payloadBytes, _ := json.Marshal(ev.Payload)
+				finalMessage = "42[" + string(nameBytes) + "," + string(payloadBytes) + "]"
 			}
 
-			packet := []interface{}{ev.Name, payload}
-			packetBytes, _ := json.Marshal(packet)
-			finalMessage := "42" + string(packetBytes)
-
+			writeMu.Lock()
 			conn.WriteMessage(websocket.TextMessage, []byte(finalMessage))
-			time.Sleep(200 * time.Millisecond) // Slight delay between emits to preserve ordering
+			writeMu.Unlock()
+			time.Sleep(10 * time.Millisecond) // Slight delay between emits to preserve ordering without hanging VUs
 		}
 	}
 

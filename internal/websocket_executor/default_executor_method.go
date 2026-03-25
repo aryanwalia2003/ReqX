@@ -57,6 +57,9 @@ func (e *defaultWebSocketExecutor) Execute(rawURL string, headers map[string]str
 		fmt.Println("Connected successfully.")
 	}
 
+	var mu sync.Mutex      // Guards expectedMessages
+	var writeMu sync.Mutex // Guards conn.WriteMessage/WriteControl (gorilla forbids concurrent writers)
+
 	// Set handlers for better debugging (only in verbose mode)
 	if !e.quiet {
 		conn.SetCloseHandler(func(code int, text string) error {
@@ -65,6 +68,8 @@ func (e *defaultWebSocketExecutor) Execute(rawURL string, headers map[string]str
 		})
 		conn.SetPingHandler(func(appData string) error {
 			fmt.Printf("\x1b[36m\n[WS_PING] Received (%s)\x1b[0m\n", appData)
+			writeMu.Lock()
+			defer writeMu.Unlock()
 			return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
 		})
 		conn.SetPongHandler(func(appData string) error {
@@ -74,6 +79,8 @@ func (e *defaultWebSocketExecutor) Execute(rawURL string, headers map[string]str
 	} else {
 		// In quiet mode, still respond to pings silently
 		conn.SetPingHandler(func(appData string) error {
+			writeMu.Lock()
+			defer writeMu.Unlock()
 			return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
 		})
 	}
@@ -86,7 +93,10 @@ func (e *defaultWebSocketExecutor) Execute(rawURL string, headers map[string]str
 		for {
 			select {
 			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(time.Second)); err != nil {
+				writeMu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(time.Second))
+				writeMu.Unlock()
+				if err != nil {
 					return
 				}
 			case <-heartbeatStop:
@@ -96,7 +106,6 @@ func (e *defaultWebSocketExecutor) Execute(rawURL string, headers map[string]str
 	}()
 	defer close(heartbeatStop)
 
-	var mu sync.Mutex
 	expectedMessages := 0
 	for _, ev := range events {
 		if ev.Type == "listen" {
@@ -156,11 +165,13 @@ func (e *defaultWebSocketExecutor) Execute(rawURL string, headers map[string]str
 			if !e.quiet {
 				fmt.Printf("[EMIT] Payload: %s\n", ev.Payload)
 			}
+			writeMu.Lock()
 			err := conn.WriteMessage(websocket.TextMessage, []byte(ev.Payload))
+			writeMu.Unlock()
 			if err != nil {
 				return errs.Wrap(err, errs.KindInternal, "Failed to write message")
 			}
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 
