@@ -168,6 +168,15 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 		if resp.StatusCode >= 400 {
 			m.ErrorMsg = resp.Status
 		}
+		// GraphQL always answers 200 OK, success or not — a status-code-only
+		// check silently counts business-rule failures (e.g. "rider already
+		// has an active trip") as passing requests. Inspect the body too.
+		if gqlErr := detectGraphQLError(bodyBytes); gqlErr != "" {
+			m.GraphQLError = gqlErr
+			if m.ErrorMsg == "" {
+				m.ErrorMsg = gqlErr
+			}
+		}
 		metrics = append(metrics, m)
 
 		// ── Extract declared variables from response body ─────────────────────

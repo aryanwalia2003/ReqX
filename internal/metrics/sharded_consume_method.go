@@ -36,7 +36,7 @@ func consumeShard(ch <-chan runner.RequestMetric) shardResult {
 		}
 
 		stat.TotalRuns++
-		failed := m.Error != nil || (m.StatusCode != 0 && m.StatusCode >= 400)
+		failed := m.Error != nil || (m.StatusCode != 0 && m.StatusCode >= 400) || m.GraphQLError != ""
 		if failed {
 			stat.Failures++
 			totalFailures++

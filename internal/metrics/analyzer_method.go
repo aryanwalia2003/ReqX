@@ -27,7 +27,7 @@ func Analyze(allMetrics [][]runner.RequestMetric, totalDuration time.Duration) R
 				order = append(order, m.Name)
 			}
 			stat.TotalRuns++
-			failed := m.Error != nil || (m.StatusCode != 0 && m.StatusCode >= 400)
+			failed := m.Error != nil || (m.StatusCode != 0 && m.StatusCode >= 400) || m.GraphQLError != ""
 			if failed {
 				stat.Failures++
 				totalFailures++
@@ -84,6 +84,9 @@ func Analyze(allMetrics [][]runner.RequestMetric, totalDuration time.Duration) R
 func errorMessage(m runner.RequestMetric) string {
 	if m.Error != nil {
 		return m.Error.Error()
+	}
+	if m.GraphQLError != "" {
+		return m.GraphQLError
 	}
 	return m.StatusString
 }

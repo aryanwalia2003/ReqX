@@ -15,8 +15,9 @@ type RequestMetric struct{
 	Duration time.Duration
 	StatusString string
 	Error error
-	ErrorMsg     string    
-	WorkerID     int       
+	ErrorMsg     string
+	GraphQLError string // non-empty when a 200 OK response body carried a GraphQL "errors" array
+	WorkerID     int
 
 	BytesSent     int64
 	BytesReceived int64
