@@ -17,9 +17,9 @@ type shardResult struct {
 }
 
 func consumeShard(ch <-chan runner.RequestMetric) shardResult {
-	byName          := make(map[string]*RequestStat, 64)
+	byName := make(map[string]*RequestStat, 64)
 	globalHistogram := newHistogram()
-	statusCodes     := make(map[int]int, 16)
+	statusCodes := make(map[int]int, 16)
 	var totalSuccess, totalFailures int
 	var totalBytesSent, totalBytesRecv int64
 
@@ -64,10 +64,10 @@ func consumeShard(ch <-chan runner.RequestMetric) shardResult {
 		}
 
 		// Bandwidth
-		stat.BytesSent     += m.BytesSent
+		stat.BytesSent += m.BytesSent
 		stat.BytesReceived += m.BytesReceived
-		totalBytesSent     += m.BytesSent
-		totalBytesRecv     += m.BytesReceived
+		totalBytesSent += m.BytesSent
+		totalBytesRecv += m.BytesReceived
 	}
 
 	return shardResult{

@@ -21,6 +21,7 @@ type SchedulerConfig struct {
 	ClearCookies bool
 	Verbosity    int
 	Personas     []personas.Persona
+	GraphQL      bool // --graphql: parse response body for a GraphQL "errors" array
 
 	Stages     []Stage       // ramp plan; mutually exclusive with MaxWorkers+Duration
 	Duration   time.Duration // wall-clock run time (0 = use stage total)

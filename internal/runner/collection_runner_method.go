@@ -28,6 +28,13 @@ func (cr *CollectionRunner) SetClearCookiesPerRequest(v bool) {
 	cr.clearCookiesPerRequest = v
 }
 
+// SetGraphQLErrorCheck enables the --graphql body scan. Off by default —
+// scanning every response body for an "errors" array costs a JSON parse per
+// request, which is wasted work for plain REST collections.
+func (cr *CollectionRunner) SetGraphQLErrorCheck(v bool) {
+	cr.graphqlErrorCheck = v
+}
+
 // Run dispatches to RunDAG when plan.DAG is non-nil, otherwise runs linearly.
 func (cr *CollectionRunner) Run(plan *planner.ExecutionPlan, ctx *RuntimeContext) ([]RequestMetric, error) {
 	if plan.DAG != nil {
@@ -170,11 +177,15 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 		}
 		// GraphQL always answers 200 OK, success or not — a status-code-only
 		// check silently counts business-rule failures (e.g. "rider already
-		// has an active trip") as passing requests. Inspect the body too.
-		if gqlErr := detectGraphQLError(bodyBytes); gqlErr != "" {
-			m.GraphQLError = gqlErr
-			if m.ErrorMsg == "" {
-				m.ErrorMsg = gqlErr
+		// has an active trip") as passing requests. Opt in with --graphql;
+		// off by default since scanning every body costs a JSON parse per
+		// request and plain REST collections never need it.
+		if cr.graphqlErrorCheck {
+			if gqlErr := detectGraphQLError(bodyBytes); gqlErr != "" {
+				m.GraphQLError = gqlErr
+				if m.ErrorMsg == "" {
+					m.ErrorMsg = gqlErr
+				}
 			}
 		}
 		metrics = append(metrics, m)

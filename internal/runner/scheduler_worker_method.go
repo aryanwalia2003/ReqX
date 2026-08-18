@@ -9,7 +9,6 @@ import (
 	"reqx/internal/scripting"
 )
 
-
 func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 	s.wg.Add(1)
 	go func() {
@@ -33,6 +32,9 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 
 		engine := NewCollectionRunner(exec, nil, nil, scripting.NewGojaRunner())
 		engine.SetVerbosity(s.cfg.Verbosity)
+		if s.cfg.GraphQL {
+			engine.SetGraphQLErrorCheck(true)
+		}
 		if s.cfg.ClearCookies {
 			engine.SetClearCookiesPerRequest(true)
 		}

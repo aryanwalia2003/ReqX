@@ -18,6 +18,7 @@ type WorkerConfig struct {
 	ClearCookies bool
 	Verbosity    int
 	Personas     []personas.Persona
+	GraphQL      bool // --graphql: parse response body for a GraphQL "errors" array
 }
 
 // Run distributes totalIterations jobs across the pool and returns all results.
@@ -92,6 +93,9 @@ func poolExecuteOne(cfg WorkerConfig, workerID int) ([]RequestMetric, error) {
 
 	engine := NewCollectionRunner(exec, nil, nil, scripting.NewGojaRunner())
 	engine.SetVerbosity(cfg.Verbosity)
+	if cfg.GraphQL {
+		engine.SetGraphQLErrorCheck(true)
+	}
 	if cfg.ClearCookies {
 		engine.SetClearCookiesPerRequest(true)
 	}
