@@ -78,6 +78,14 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 
 			s.activeWorkers.Store(s.desiredWorkers.Load())
 
+			// Without this, an active worker (one that never hits the idle
+			// gate above) ignores cancellation entirely and loops forever —
+			// conduct()'s s.wg.Wait() then hangs even after all stages have
+			// finished and the context has been cancelled.
+			if ctx.Err() != nil {
+				return
+			}
+
 			// Reset the AsyncStop channel between iterations so each DAG run
 			// gets a fresh channel. Sockets from the previous iteration are
 			// still alive listening on the OLD channel; they are unaffected.
