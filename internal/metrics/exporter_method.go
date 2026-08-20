@@ -20,6 +20,7 @@ type exportRecord struct {
 	BytesSent     int64  `json:"bytes_sent,omitempty"`
 	BytesReceived int64  `json:"bytes_received,omitempty"`
 	Error         string `json:"error,omitempty"`
+	GraphQLError  string `json:"graphql_error,omitempty"`
 }
 
 // ExportJSON writes all raw metrics to path as newline-delimited JSON.
@@ -47,6 +48,9 @@ func ExportJSON(allMetrics [][]runner.RequestMetric, path string) error {
 			}
 			if m.Error != nil {
 				rec.Error = m.Error.Error()
+			}
+			if m.GraphQLError != "" {
+				rec.GraphQLError = m.GraphQLError
 			}
 			if err := enc.Encode(rec); err != nil {
 				return errs.Wrap(err, errs.KindInternal, "failed to encode metric record")
