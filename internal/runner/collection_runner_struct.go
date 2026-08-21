@@ -22,6 +22,12 @@ type RequestMetric struct {
 	BytesSent     int64
 	BytesReceived int64
 	TTFB          time.Duration
+
+	// StartedAtMs is unix millis, taken from the time.Now() call each
+	// executor already makes to measure Duration — no extra clock read.
+	// int64 instead of time.Time to keep this struct small across the
+	// [][]RequestMetric slices held for a whole run.
+	StartedAtMs int64
 }
 
 // CollectionRunner handles executing a full collection of requests.

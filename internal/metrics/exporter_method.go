@@ -16,6 +16,7 @@ type exportRecord struct {
 	StatusCode    int    `json:"status_code"`
 	Status        string `json:"status"`
 	DurationMs    int64  `json:"duration_ms"`
+	StartedAtMs   int64  `json:"started_at_ms,omitempty"`
 	TTFBMs        int64  `json:"ttfb_ms,omitempty"`
 	BytesSent     int64  `json:"bytes_sent,omitempty"`
 	BytesReceived int64  `json:"bytes_received,omitempty"`
@@ -42,6 +43,7 @@ func ExportJSON(allMetrics [][]runner.RequestMetric, path string) error {
 				StatusCode:    m.StatusCode,
 				Status:        m.StatusString,
 				DurationMs:    m.Duration.Milliseconds(),
+				StartedAtMs:   m.StartedAtMs,
 				TTFBMs:        m.TTFB.Milliseconds(),
 				BytesSent:     m.BytesSent,
 				BytesReceived: m.BytesReceived,

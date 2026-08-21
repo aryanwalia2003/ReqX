@@ -138,12 +138,13 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 				fmt.Printf("Request Failed: %v\n", err)
 			}
 			metrics = append(metrics, RequestMetric{
-				Name:      req.Name,
-				Protocol:  "HTTP",
-				Duration:  totalTime,
-				Error:     err,
-				ErrorMsg:  err.Error(),
-				BytesSent: int64(len(reqBody)),
+				Name:        req.Name,
+				Protocol:    "HTTP",
+				Duration:    totalTime,
+				Error:       err,
+				ErrorMsg:    err.Error(),
+				BytesSent:   int64(len(reqBody)),
+				StartedAtMs: t0.UnixMilli(),
 			})
 			continue
 		}
@@ -171,6 +172,7 @@ func (cr *CollectionRunner) runLinear(plan *planner.ExecutionPlan, ctx *RuntimeC
 			BytesSent:     int64(len(reqBody)),
 			BytesReceived: bytesReceived,
 			TTFB:          ttfb,
+			StartedAtMs:   t0.UnixMilli(),
 		}
 		if resp.StatusCode >= 400 {
 			m.ErrorMsg = resp.Status
@@ -342,6 +344,7 @@ func (cr *CollectionRunner) runWebSocket(
 		metrics = append(metrics, RequestMetric{
 			Name: req.Name, Protocol: "WS",
 			Duration: time.Since(start), StatusString: "ASYNC", Error: err,
+			StartedAtMs: start.UnixMilli(),
 		})
 		if err != nil {
 			color.Yellow("⚠ Background WS failed: %v. Continuing...\n", err)
@@ -355,6 +358,7 @@ func (cr *CollectionRunner) runWebSocket(
 	metrics = append(metrics, RequestMetric{
 		Name: req.Name, Protocol: "WS",
 		Duration: time.Since(start), StatusString: "SYNC", Error: err,
+		StartedAtMs: start.UnixMilli(),
 	})
 	if err != nil {
 		fmt.Printf("WS request %s failed: %v\n", req.Name, err)
@@ -404,6 +408,7 @@ func (cr *CollectionRunner) runSocketIO(
 		metrics = append(metrics, RequestMetric{
 			Name: req.Name, Protocol: "SOCKET",
 			Duration: time.Since(start), StatusString: "ASYNC", Error: err,
+			StartedAtMs: start.UnixMilli(),
 		})
 		if err != nil {
 			color.Yellow("⚠ Background Socket failed: %v. Continuing...\n", err)
@@ -420,6 +425,7 @@ func (cr *CollectionRunner) runSocketIO(
 	metrics = append(metrics, RequestMetric{
 		Name: req.Name, Protocol: "SOCKET",
 		Duration: time.Since(start), StatusString: "SYNC", Error: err,
+		StartedAtMs: start.UnixMilli(),
 	})
 	if err != nil {
 		fmt.Printf("SIO request %s failed: %v\n", req.Name, err)
