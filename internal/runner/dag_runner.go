@@ -162,7 +162,12 @@ func (cr *CollectionRunner) RunDAG(plan *planner.ExecutionPlan, ctx *RuntimeCont
 					eval: dag.EvalContext{
 						StatusCode: m.StatusCode,
 						DurationMs: m.Duration.Milliseconds(),
-						Failed:     m.Error != nil || (m.StatusCode >= 400 && m.StatusCode != 0),
+						// GraphQL answers 200 OK even on a business-rule error — the
+						// error lives in m.GraphQLError (set when --graphql is on),
+						// not m.Error or the status code. Without this, "failed ==
+						// false" conditions never see the failures this whole flag
+						// exists to catch.
+						Failed: m.Error != nil || m.GraphQLError != "" || (m.StatusCode >= 400 && m.StatusCode != 0),
 					},
 				}
 			}(slot, nodeIdx)
