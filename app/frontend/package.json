@@ -17,6 +17,7 @@
     "gen:feature": "plop feature",
     "gen:component": "plop component",
     "gen:hook": "plop hook",
+    "gen:machine": "plop machine",
     "prepare": "cd ../.. && node app/frontend/node_modules/husky/bin.js"
   },
   "dependencies": {

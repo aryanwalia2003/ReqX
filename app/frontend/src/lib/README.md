@@ -18,6 +18,11 @@ any feature might need, with no UI attached.
   `onErrorReported` — this is what `<ErrorBoundary>` and the root's
   `installGlobalErrorHandlers` funnel into, and where a future telemetry
   sink would subscribe.
+- **`machine`** — `createMachine`, a small dependency-free finite state
+  machine: explicit states + the events each one accepts, with an optional
+  `context` payload updated via `assign`. Wire one into a component with
+  `useMachine` (`src/hooks/README.md`). Shared, cross-feature machine
+  configs live under `machines/` — see `src/lib/machines/README.md`.
 
 ## Error handling, end to end
 

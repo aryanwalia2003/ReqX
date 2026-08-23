@@ -1,0 +1,19 @@
+import { describe, expect, it } from 'vitest'
+
+import { {{camelCase name}}Machine } from '@/lib/machines/{{camelCase name}}'
+
+describe('{{camelCase name}}Machine', () => {
+  it('starts idle', () => {
+    expect({{camelCase name}}Machine.initial.state).toBe('idle')
+  })
+
+  it('activates and resets', () => {
+    const active = {{camelCase name}}Machine.transition({{camelCase name}}Machine.initial, {
+      type: 'ACTIVATE',
+    })
+    expect(active.state).toBe('active')
+
+    const reset = {{camelCase name}}Machine.transition(active, { type: 'RESET' })
+    expect(reset.state).toBe('idle')
+  })
+})

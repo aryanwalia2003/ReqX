@@ -56,3 +56,19 @@ isLoading, run }`. `error` is an `AppError` by default (`src/lib/errors.ts`) —
   on the first one).
 - **`useIsMounted()`** — returns a `() => boolean`; guard a `setState` inside
   an async callback that may resolve after unmount.
+- **`useMachine(machine)`** — wires a `createMachine` config
+  (`src/lib/machine.ts`) into React state: `{ state, context, send, matches,
+can }`. Reach for a machine instead of a pile of booleans when a
+  component's states + valid transitions between them matter — e.g. a
+  connection that can only go `idle → connecting → open`, never straight to
+  `open`:
+
+  ```tsx
+  const { state, send, matches } = useMachine(connectionMachine)
+  <Button disabled={!matches('idle')} onClick={() => send({ type: 'CONNECT' })}>
+    Connect
+  </Button>
+  ```
+
+  Run `npm run gen:machine` to scaffold a new shared one under
+  `src/lib/machines/` — see `src/lib/machines/README.md`.

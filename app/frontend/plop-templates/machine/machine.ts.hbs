@@ -1,0 +1,14 @@
+import { createMachine } from '@/lib/machine'
+
+export type {{pascalCase name}}State = 'idle' | 'active'
+export type {{pascalCase name}}Event = { type: 'ACTIVATE' } | { type: 'RESET' }
+
+// TODO: states/events/context ko apne domain ke hisaab se badlo.
+export const {{camelCase name}}Machine = createMachine<undefined, {{pascalCase name}}State, {{pascalCase name}}Event>({
+  initial: 'idle',
+  context: undefined,
+  states: {
+    idle: { on: { ACTIVATE: 'active' } },
+    active: { on: { RESET: 'idle' } },
+  },
+})

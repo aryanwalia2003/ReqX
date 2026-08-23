@@ -17,9 +17,9 @@ Once the Go side is wired up, the app runs as a whole via `wails dev` from
 ## Conventions
 
 - **Never hand-write boilerplate.** `npm run gen:feature`, `gen:component`,
-  `gen:hook` scaffold new code with the right shape already in place. If
-  you're copy-pasting an existing file as a starting point, there should
-  probably be a generator for that instead — add one.
+  `gen:hook`, `gen:machine` scaffold new code with the right shape already
+  in place. If you're copy-pasting an existing file as a starting point,
+  there should probably be a generator for that instead — add one.
 - **Import via the `@/` alias**, never a deep relative `../../../` path —
   ESLint enforces this. Wails-generated bindings (once they exist) live
   under `./wailsjs` and are reached via the `@wails/` alias the same way.
@@ -47,7 +47,7 @@ src/
   features/     # one folder per feature slice — see src/features/README.md
   components/ui/ # shared presentational components
   hooks/         # shared hooks
-  lib/           # framework-agnostic utilities (result.ts, cn.ts)
+  lib/           # framework-agnostic utilities (result.ts, errors.ts, machine.ts, cn.ts)
   types/         # shared/global types + the @wails ambient placeholder
   styles/        # Tailwind entry + design tokens
 plop-templates/  # source templates for the gen:* generators
@@ -55,15 +55,15 @@ plop-templates/  # source templates for the gen:* generators
 
 ## Tooling
 
-| Command                                              | What it does                               |
-| ---------------------------------------------------- | ------------------------------------------ |
-| `npm run dev`                                        | Vite dev server                            |
-| `npm run build`                                      | typecheck + production build               |
-| `npm run typecheck`                                  | `tsc` only, no emit                        |
-| `npm run lint` / `lint:fix`                          | ESLint                                     |
-| `npm run format` / `format:check`                    | Prettier (auto-sorts Tailwind classes too) |
-| `npm run test` / `test:watch`                        | Vitest + React Testing Library             |
-| `npm run gen:feature` / `gen:component` / `gen:hook` | Plop generators                            |
+| Command                                                              | What it does                               |
+| -------------------------------------------------------------------- | ------------------------------------------ |
+| `npm run dev`                                                        | Vite dev server                            |
+| `npm run build`                                                      | typecheck + production build               |
+| `npm run typecheck`                                                  | `tsc` only, no emit                        |
+| `npm run lint` / `lint:fix`                                          | ESLint                                     |
+| `npm run format` / `format:check`                                    | Prettier (auto-sorts Tailwind classes too) |
+| `npm run test` / `test:watch`                                        | Vitest + React Testing Library             |
+| `npm run gen:feature` / `gen:component` / `gen:hook` / `gen:machine` | Plop generators                            |
 
 A pre-commit hook (repo-root `.husky/`) runs ESLint + Prettier on staged
 files automatically — you shouldn't need to run lint/format by hand before

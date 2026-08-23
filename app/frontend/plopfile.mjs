@@ -1,7 +1,8 @@
 /**
- * Code generators — run via `npm run gen:feature` / `gen:component` / `gen:hook`.
- * The point: nobody should ever hand-write the boilerplate for a new feature
- * slice, shared component, or shared hook. Ask Plop instead.
+ * Code generators — run via `npm run gen:feature` / `gen:component` /
+ * `gen:hook` / `gen:machine`. The point: nobody should ever hand-write the
+ * boilerplate for a new feature slice, shared component, hook, or state
+ * machine. Ask Plop instead.
  */
 export default function (plop) {
   plop.setGenerator('feature', {
@@ -72,6 +73,29 @@ export default function (plop) {
         path: 'src/hooks/index.ts',
         pattern: /(\/\/ Barrel export.*\n)/,
         template: "$1export * from '@/hooks/use{{pascalCase name}}'\n",
+      },
+    ],
+  })
+
+  plop.setGenerator('machine', {
+    description: 'Scaffold a shared state machine under src/lib/machines/<name>',
+    prompts: [
+      {
+        type: 'input',
+        name: 'name',
+        message: 'Machine name (e.g. "connection", "wizard"):',
+      },
+    ],
+    actions: [
+      {
+        type: 'add',
+        path: 'src/lib/machines/{{camelCase name}}.ts',
+        templateFile: 'plop-templates/machine/machine.ts.hbs',
+      },
+      {
+        type: 'add',
+        path: 'src/lib/machines/{{camelCase name}}.test.ts',
+        templateFile: 'plop-templates/machine/machine.test.ts.hbs',
       },
     ],
   })
