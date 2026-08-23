@@ -1,0 +1,14 @@
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+if [ -n "$STAGED_GO" ]; then
+  UNFORMATTED=$(gofmt -l $STAGED_GO)
+  if [ -n "$UNFORMATTED" ]; then
+    echo "gofmt would reformat:"
+    echo "$UNFORMATTED"
+    echo "Run: gofmt -w $UNFORMATTED"
+    exit 1
+  fi
+fi
+
+if git diff --cached --name-only --diff-filter=ACM | grep -q '^app/frontend/'; then
+  (cd app/frontend && npx lint-staged) || exit 1
+fi

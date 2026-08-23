@@ -23,12 +23,18 @@ go.work.sum
 
 # Editor and IDE settings
 .vscode/
+# ...except the app/frontend project's shared recommended-extensions/settings,
+# which are meant to be committed for onboarding DX.
+!/app/frontend/.vscode/
 .idea/
 *.swp
 *.~
 
 # ReqX specific build artifacts
 dist/
+# ...except app/frontend/dist, which app/frontend/.gitignore governs itself
+# (it keeps a committed index.html placeholder for go:embed — see there).
+!/app/frontend/dist/
 reqx-windows.zip
 reqx.exe
 
@@ -36,7 +42,9 @@ reqx.exe
 test-env.json
 test-collection.json
 test-socketio.json
-*.json
+# root-level only — scoped so app/frontend's package.json, tsconfig.json,
+# wails.json etc. aren't accidentally swallowed too.
+/*.json
 
 .agents
 

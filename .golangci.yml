@@ -1,0 +1,33 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - unconvert
+    - misspell
+
+  exclusions:
+    rules:
+      # generated Wails bindings — not hand-written, not our style to fix
+      - path: 'app/frontend/wailsjs/'
+        linters:
+          - all
+
+formatters:
+  # No gofumpt: it forbids splitting third-party from local (reqx/...)
+  # imports into separate groups, but that three-group style (std / 3rd
+  # party / reqx/internal) is this codebase's existing convention (see e.g.
+  # cmd/sio_cmd_ctor.go) — enabling it would flag most of the existing
+  # codebase as "unformatted" on day one.
+  enable:
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - reqx

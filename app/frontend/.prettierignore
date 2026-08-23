@@ -1,0 +1,5 @@
+dist
+wailsjs
+node_modules
+# Handlebars templates — not valid TS/TSX/CSS on their own, don't parse them as such.
+plop-templates

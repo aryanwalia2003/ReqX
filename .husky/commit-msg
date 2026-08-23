@@ -1,0 +1,6 @@
+case "$1" in
+  /*) MSG_FILE="$1" ;;
+  *) MSG_FILE="$(pwd)/$1" ;;
+esac
+
+cd app/frontend && npx --no -- commitlint --edit "$MSG_FILE"

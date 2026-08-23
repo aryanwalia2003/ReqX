@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens ported from internal/ui/assets/index.html (the existing
+ * `reqx ui` dashboard) so the new desktop app stays visually consistent
+ * with it rather than inventing a second theme.
+ */
+@theme {
+  --color-bg: #0f1117;
+  --color-surface: #1a1d27;
+  --color-surface-2: #22263a;
+  --color-border: #2a2d3e;
+  --color-fg: #e2e8f0;
+  --color-muted: #64748b;
+  --color-accent: #6366f1;
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+  --color-warning: #f59e0b;
+
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  @apply bg-bg text-fg font-sans antialiased;
+}

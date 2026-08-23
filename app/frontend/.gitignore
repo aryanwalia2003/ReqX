@@ -1,0 +1,29 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+# dist is real build output, EXCEPT index.html — a placeholder is committed
+# so `go build ./...` at the repo root compiles even before anyone has run
+# `npm run build` here (needed for app/main.go's //go:embed all:frontend/dist).
+dist/*
+!dist/index.html
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

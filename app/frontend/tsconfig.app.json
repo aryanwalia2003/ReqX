@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["vite/client"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Strictness — deliberately stricter than the TS default so bugs surface
+       at compile time, not in a Wails webview at runtime. */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /* Path alias — always import via "@/..." from src/, never deep
+       relative "../../../" paths. Mirrored in vite.config.ts. No "baseUrl":
+       deprecated as of TS 6 — with "moduleResolution": "bundler", "paths"
+       resolve relative to this file without it. */
+    "paths": {
+      "@/*": ["./src/*"],
+      "@wails/*": ["./wailsjs/*"]
+    }
+  },
+  "include": ["src"]
+}

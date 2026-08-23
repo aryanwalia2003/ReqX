@@ -99,6 +99,16 @@ reqx collection add api.json -n "Health" -u "{{base_url}}/health"
 
 ---
 
+## 🖥️ Desktop App (WIP)
+
+A native desktop GUI (Wails + React) is scaffolded under [`app/`](app/README.md)
+and [`app/frontend/`](app/frontend/README.md) — collection editing, live run
+streaming, and a Socket.IO/WebSocket debugger, without giving up ReqX's
+single-binary, offline-first philosophy. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
+for the repo layout.
+
+---
+
 ## 🤝 Contributing & Architecture
 
 ReqX follows a strict **Interface-Driven Design**. If you are contributing, please refer to our architecture guides:

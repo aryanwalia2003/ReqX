@@ -1,0 +1,11 @@
+// Thin wrappers around @wails/go/services/* bindings for the "{{name}}"
+// feature go here. Each should return a Result<T> (src/lib/result.ts)
+// instead of a bare Promise, so call sites never need try/catch:
+//
+//   import { Ping } from '@wails/go/services/ExampleService'
+//   import { toResult } from '@/lib/result'
+//
+//   export function ping(name: string) {
+//     return toResult(Ping({ name }))
+//   }
+export {}
