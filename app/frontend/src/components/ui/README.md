@@ -43,4 +43,10 @@ learn.
 - **Overlay**: `Dialog` (+ `DialogHeader`/`DialogTitle`/
   `DialogDescription`/`DialogContent`/`DialogFooter`), `Tooltip`
 - **Navigation**: `Tabs` (+ `TabsList`/`TabsTrigger`/`TabsContent`)
+- **Resilience**: `ErrorBoundary` — wraps a subtree, catches render crashes,
+  shows a fallback instead of a blank screen, and reports via
+  `src/lib/reportError.ts`. Pass `resetKey` to auto-recover when it changes
+  (e.g. wrap a tab panel with `resetKey={activeTab}`), or `fallback` for a
+  custom UI. The root already has one (`main.tsx`) — wrap an individual
+  feature panel too if one flaky feature shouldn't take down the whole app.
 - **Misc**: `Kbd`, `icons` (inline SVGs — no icon package installed)

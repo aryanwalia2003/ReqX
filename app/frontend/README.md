@@ -29,7 +29,13 @@ Once the Go side is wired up, the app runs as a whole via `wails dev` from
 - **Naming**: components `PascalCase.tsx`, hooks `useThing.ts`, everything
   else `kebab-case.ts`. One component per file.
 - **Errors are values, not exceptions.** See `src/lib/result.ts` — a bound
-  Wails call becomes `toResult(SomeGoMethod(...))`, not a `try/catch`.
+  Wails call becomes `toResult(SomeGoMethod(...))`, not a `try/catch`. Any
+  rejection is normalized into an `AppError` (`src/lib/errors.ts`) with a
+  `kind` matching the Go side's `internal/errs.Kind`. Render crashes are
+  caught by `<ErrorBoundary>`; anything else that slips through is caught by
+  `installGlobalErrorHandlers` — both report through `src/lib/reportError.ts`,
+  which is what turns into the toast you see. See `src/lib/README.md` for the
+  full picture.
 - **Every folder that isn't obvious has a `README.md`** explaining what
   belongs there — read the nearest one before guessing.
 

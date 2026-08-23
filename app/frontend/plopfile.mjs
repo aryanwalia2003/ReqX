@@ -61,6 +61,18 @@ export default function (plop) {
         path: 'src/hooks/use{{pascalCase name}}.ts',
         templateFile: 'plop-templates/hook/useHook.ts.hbs',
       },
+      {
+        type: 'add',
+        path: 'src/hooks/use{{pascalCase name}}.test.ts',
+        templateFile: 'plop-templates/hook/useHook.test.ts.hbs',
+      },
+      {
+        // Barrel me apne aap register — kabhi haath se add nahi karna padta.
+        type: 'modify',
+        path: 'src/hooks/index.ts',
+        pattern: /(\/\/ Barrel export.*\n)/,
+        template: "$1export * from '@/hooks/use{{pascalCase name}}'\n",
+      },
     ],
   })
 }

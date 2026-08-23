@@ -1,0 +1,11 @@
+import { renderHook } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+
+import { use{{pascalCase name}} } from '@/hooks/use{{pascalCase name}}'
+
+describe('use{{pascalCase name}}', () => {
+  it('returns the initial value', () => {
+    const { result } = renderHook(() => use{{pascalCase name}}())
+    expect(result.current.value).toBeUndefined()
+  })
+})

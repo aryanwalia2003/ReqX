@@ -1,3 +1,6 @@
+import { toAppError } from '@/lib/errors'
+import type { AppError } from '@/lib/errors'
+
 /**
  * The project's error-handling convention: functions that can fail return a
  * `Result` instead of throwing. Throwing is reserved for truly exceptional,
@@ -10,12 +13,12 @@
  * @example
  * const result = await toResult(window.go.services.ExampleService.ping({ name: 'dev' }))
  * if (!result.ok) {
- *   showError(result.error)
+ *   showError(result.error.message) // result.error.kind bhi available hai
  *   return
  * }
  * console.log(result.value.message)
  */
-export type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E }
+export type Result<T, E = AppError> = { ok: true; value: T } | { ok: false; error: E }
 
 export function ok<T>(value: T): Result<T, never> {
   return { ok: true, value }
@@ -26,10 +29,10 @@ export function err<E>(error: E): Result<never, E> {
 }
 
 /** Wraps a promise that may reject (e.g. a generated Wails binding call). */
-export async function toResult<T>(promise: Promise<T>): Promise<Result<T>> {
+export async function toResult<T>(promise: Promise<T>): Promise<Result<T, AppError>> {
   try {
     return ok(await promise)
   } catch (cause) {
-    return err(cause instanceof Error ? cause : new Error(String(cause)))
+    return err(toAppError(cause))
   }
 }
