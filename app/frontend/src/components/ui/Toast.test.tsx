@@ -6,7 +6,7 @@ import { ToastProvider, useToast } from '@/components/ui/Toast'
 
 function Example() {
   const toast = useToast()
-  return <button onClick={() => toast({ title: 'Collection saved', duration: 50 })}>Save</button>
+  return <button onClick={() => toast({ title: 'Collection saved', duration: 300 })}>Save</button>
 }
 
 describe('ToastProvider / useToast', () => {
@@ -18,7 +18,7 @@ describe('ToastProvider / useToast', () => {
     )
 
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect(screen.getByText('Collection saved')).toBeInTheDocument()
+    expect(await screen.findByText('Collection saved')).toBeInTheDocument()
 
     await waitFor(() => expect(screen.queryByText('Collection saved')).not.toBeInTheDocument())
   })
