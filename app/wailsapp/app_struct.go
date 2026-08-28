@@ -10,6 +10,7 @@ import "reqx/app/services"
 // (and wire it in NewApp) for each new service — Wails binds every exported
 // field's exported methods automatically.
 type App struct {
-	Example *services.ExampleService
-	Request *services.RequestService
+	Example    *services.ExampleService
+	Request    *services.RequestService
+	Collection *services.CollectionService
 }

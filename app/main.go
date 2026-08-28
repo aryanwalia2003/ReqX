@@ -30,7 +30,8 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		Bind: app.BindTargets(),
+		Bind:      app.BindTargets(),
+		OnStartup: app.OnStartup,
 		// Har bound method ka error yahan se guzarta — internal/errs ke
 		// AppError ko {kind, message} JSON me badal ke frontend bhejta,
 		// bare Go error string ki jagah. Dekho internal/errs/wails_translator_method.go.

@@ -5,7 +5,10 @@
  * 1. The `declare global { interface Window { go: ... } }` block below —
  *    ADD to it (don't replace) as more services get bound in
  *    app/wailsapp/app_struct.go, so it stays the one place declaring the
- *    shape of window.go.
+ *    shape of window.go. `go` and every service on it are optional — that's
+ *    the honest type: outside the real Wails webview (a plain browser),
+ *    window.go genuinely doesn't exist. wailsjs/go/wailsRuntime.ts's
+ *    callWailsMethod is what turns a missing one into a rejected promise.
  * 2. wailsjs/go/services/<Service>.ts — one hand-written proxy per bound
  *    service (e.g. wailsjs/go/services/RequestService.ts), each just
  *    calling through to window.go.services.<Service>.<Method>, typed
@@ -15,14 +18,26 @@
  * `wails generate module` has actually run; its own output is a drop-in
  * replacement with the same shape.
  */
+import type {
+  Collection,
+  Environment,
+  RunCollectionInput,
+  RunCollectionOutput,
+} from '@/features/collection-runner/types'
 import type { SendRequestInput, SendRequestOutput } from '@/features/send-request/types'
 
 declare global {
   interface Window {
-    go: {
-      services: {
-        RequestService: {
+    go?: {
+      services?: {
+        RequestService?: {
           Send(input: SendRequestInput): Promise<SendRequestOutput>
+        }
+        CollectionService?: {
+          PickFile(title: string): Promise<string>
+          Open(path: string): Promise<Collection>
+          OpenEnvironment(path: string): Promise<Environment>
+          Run(input: RunCollectionInput): Promise<RunCollectionOutput>
         }
       }
     }

@@ -6,7 +6,8 @@ import "reqx/app/services"
 // gets bound to the frontend.
 func NewApp() *App {
 	return &App{
-		Example: services.NewExampleService(),
-		Request: services.NewRequestService(),
+		Example:    services.NewExampleService(),
+		Request:    services.NewRequestService(),
+		Collection: services.NewCollectionService(),
 	}
 }
