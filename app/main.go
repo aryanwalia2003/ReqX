@@ -10,6 +10,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 
 	"reqx/app/wailsapp"
+	"reqx/internal/errs"
 )
 
 // all: forces embedding of dot-prefixed files too, so a checked-in
@@ -30,6 +31,10 @@ func main() {
 			Assets: assets,
 		},
 		Bind: app.BindTargets(),
+		// Har bound method ka error yahan se guzarta — internal/errs ke
+		// AppError ko {kind, message} JSON me badal ke frontend bhejta,
+		// bare Go error string ki jagah. Dekho internal/errs/wails_translator_method.go.
+		ErrorFormatter: errs.FormatForWails,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "reqx-app:", err)

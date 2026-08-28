@@ -41,9 +41,10 @@ function hasStringMessage(value: unknown): value is { message: string; kind?: un
 
 /**
  * Kisi bhi thrown/rejected value ko ek consistent AppError shape me badalta.
- * Aaj Wails sirf plain string message bhejta hai — kal Go side JSON-encoded
- * `{ kind, message }` bheje, to wo bhi yahin se parse ho jayega, bina kisi
- * call-site ko badle.
+ * Go side (app/main.go ka ErrorFormatter, internal/errs.FormatForWails) ab
+ * JSON-encoded `{ kind, message }` bhejta hai — wahi yahan parse hota. Ek
+ * bare plain-string fallback bhi hai (timeout errors, ya kabhi errfmt hook
+ * na chale) taaki wo bhi silently na tootey.
  */
 export function toAppError(cause: unknown): AppError {
   if (typeof cause === 'string') {
