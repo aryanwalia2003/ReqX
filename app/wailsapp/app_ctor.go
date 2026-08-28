@@ -7,5 +7,6 @@ import "reqx/app/services"
 func NewApp() *App {
 	return &App{
 		Example: services.NewExampleService(),
+		Request: services.NewRequestService(),
 	}
 }

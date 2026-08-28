@@ -11,4 +11,5 @@ import "reqx/app/services"
 // field's exported methods automatically.
 type App struct {
 	Example *services.ExampleService
+	Request *services.RequestService
 }

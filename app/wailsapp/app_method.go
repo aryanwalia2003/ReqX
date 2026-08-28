@@ -7,5 +7,6 @@ package wailsapp
 func (a *App) BindTargets() []interface{} {
 	return []interface{}{
 		a.Example,
+		a.Request,
 	}
 }
