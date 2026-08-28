@@ -6,12 +6,13 @@ import { callWailsMethod } from '@wails/go/wailsRuntime'
 import type {
   Collection,
   Environment,
+  Persona,
   RunCollectionInput,
   RunCollectionOutput,
 } from '@/features/collection-runner/types'
 
-export function PickFile(title: string): Promise<string> {
-  return callWailsMethod(window.go?.services?.CollectionService?.PickFile(title))
+export function PickFile(title: string, extension: string): Promise<string> {
+  return callWailsMethod(window.go?.services?.CollectionService?.PickFile(title, extension))
 }
 
 export function Open(path: string): Promise<Collection> {
@@ -20,6 +21,10 @@ export function Open(path: string): Promise<Collection> {
 
 export function OpenEnvironment(path: string): Promise<Environment> {
   return callWailsMethod(window.go?.services?.CollectionService?.OpenEnvironment(path))
+}
+
+export function OpenPersonas(path: string): Promise<Persona[]> {
+  return callWailsMethod(window.go?.services?.CollectionService?.OpenPersonas(path))
 }
 
 export function Run(input: RunCollectionInput): Promise<RunCollectionOutput> {

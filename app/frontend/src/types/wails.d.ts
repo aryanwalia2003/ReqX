@@ -21,9 +21,11 @@
 import type {
   Collection,
   Environment,
+  Persona,
   RunCollectionInput,
   RunCollectionOutput,
 } from '@/features/collection-runner/types'
+import type { RunRow, StatRow } from '@/features/history/types'
 import type { SendRequestInput, SendRequestOutput } from '@/features/send-request/types'
 
 declare global {
@@ -34,10 +36,15 @@ declare global {
           Send(input: SendRequestInput): Promise<SendRequestOutput>
         }
         CollectionService?: {
-          PickFile(title: string): Promise<string>
+          PickFile(title: string, extension: string): Promise<string>
           Open(path: string): Promise<Collection>
           OpenEnvironment(path: string): Promise<Environment>
+          OpenPersonas(path: string): Promise<Persona[]>
           Run(input: RunCollectionInput): Promise<RunCollectionOutput>
+        }
+        HistoryService?: {
+          ListRuns(limit: number): Promise<RunRow[]>
+          GetRunStats(runId: string): Promise<StatRow[]>
         }
       }
     }

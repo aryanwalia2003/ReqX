@@ -22,7 +22,7 @@ func (s *Scheduler) spawnWorker(ctx context.Context, id int) {
 		}
 		if len(s.cfg.Personas) > 0 {
 			p := s.cfg.Personas[(id-1)%len(s.cfg.Personas)]
-			applyPersona(rtCtx, p)
+			ApplyPersona(rtCtx, p)
 		}
 
 		exec := http_executor.NewDefaultExecutor()

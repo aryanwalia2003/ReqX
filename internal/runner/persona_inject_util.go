@@ -6,7 +6,12 @@ import (
 	"reqx/internal/personas"
 )
 
-func applyPersona(ctx *RuntimeContext, p personas.Persona) {
+// ApplyPersona sets ctx.Environment.Variables["persona.<col>"] for every
+// column in p, so a request can reference {{persona.<col>}}. Exported so
+// callers outside package runner (the CLI's sequential path in
+// cmd/run_cmd_ctor.go, app/services.CollectionService) don't each
+// reimplement it.
+func ApplyPersona(ctx *RuntimeContext, p personas.Persona) {
 	if ctx == nil {
 		return
 	}
@@ -24,4 +29,3 @@ func applyPersona(ctx *RuntimeContext, p personas.Persona) {
 		ctx.Environment.Variables["persona."+key] = v
 	}
 }
-

@@ -15,6 +15,7 @@ func (a *App) BindTargets() []interface{} {
 		a.Example,
 		a.Request,
 		a.Collection,
+		a.History,
 	}
 }
 

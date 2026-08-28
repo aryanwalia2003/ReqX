@@ -75,4 +75,25 @@ describe('SendRequestPanel', () => {
       ),
     )
   })
+
+  it('initializes the form from loadRequest (e.g. a request opened from the sidebar)', () => {
+    render(
+      <SendRequestPanel
+        loadRequest={{
+          method: 'POST',
+          url: 'https://api.example.com/posts',
+          headers: { 'X-Test': 'value' },
+          body: '{"title":"hi"}',
+          auth: { type: 'bearer', token: 'secret' },
+        }}
+      />,
+    )
+
+    expect(screen.getByLabelText('URL')).toHaveValue('https://api.example.com/posts')
+    expect(screen.getByLabelText('HTTP method')).toHaveValue('POST')
+    expect(screen.getByLabelText('Bearer token')).toHaveValue('secret')
+    expect(screen.getByLabelText('Header name')).toHaveValue('X-Test')
+    expect(screen.getByLabelText('Header value')).toHaveValue('value')
+    expect(screen.getByLabelText('Body')).toHaveValue('{"title":"hi"}')
+  })
 })

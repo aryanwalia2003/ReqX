@@ -40,13 +40,34 @@ function formatBody(body: string, contentType: string | undefined): string {
   }
 }
 
+export interface SendRequestPanelProps {
+  /**
+   * Sidebar se ek request yahan bhej do — form usi se initialize hota. Sirf
+   * MOUNT pe padha jaata (initial state), baad me prop badalne se form
+   * apne aap reset nahi hota — caller ko naya `key` dena chahiye (e.g. ek
+   * counter) taaki React fresh mount kare aur naya request load ho jaaye.
+   */
+  loadRequest?: SendRequestInput | null
+}
+
+function headerRowsFrom(headers: Record<string, string> | undefined): HeaderRow[] {
+  const entries = Object.entries(headers ?? {})
+  return entries.length > 0
+    ? entries.map(([key, value]) => ({ id: nextRowId++, key, value }))
+    : [emptyRow()]
+}
+
 /** Postman-lite: ek request banao, bhejo, response dekho — end-to-end Wails wiring. */
-export function SendRequestPanel() {
-  const [method, setMethod] = useState('GET')
-  const [url, setUrl] = useState('')
-  const [headerRows, setHeaderRows] = useState<HeaderRow[]>([emptyRow()])
-  const [body, setBody] = useState('')
-  const [bearerToken, setBearerToken] = useState('')
+export function SendRequestPanel({ loadRequest }: SendRequestPanelProps = {}) {
+  const [method, setMethod] = useState(loadRequest?.method || 'GET')
+  const [url, setUrl] = useState(loadRequest?.url ?? '')
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() =>
+    headerRowsFrom(loadRequest?.headers),
+  )
+  const [body, setBody] = useState(loadRequest?.body ?? '')
+  const [bearerToken, setBearerToken] = useState(
+    loadRequest?.auth?.type === 'bearer' ? (loadRequest.auth.token ?? '') : '',
+  )
 
   const { data, error, isLoading, run } = useSendRequest()
 

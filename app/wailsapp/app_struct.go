@@ -13,4 +13,5 @@ type App struct {
 	Example    *services.ExampleService
 	Request    *services.RequestService
 	Collection *services.CollectionService
+	History    *services.HistoryService
 }

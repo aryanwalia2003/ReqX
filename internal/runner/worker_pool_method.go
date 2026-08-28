@@ -83,7 +83,7 @@ func poolExecuteOne(cfg WorkerConfig, workerID int) ([]RequestMetric, error) {
 	}
 	if len(cfg.Personas) > 0 {
 		p := cfg.Personas[(workerID-1)%len(cfg.Personas)]
-		applyPersona(rtCtx, p)
+		ApplyPersona(rtCtx, p)
 	}
 
 	exec := http_executor.NewDefaultExecutor()

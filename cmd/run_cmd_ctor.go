@@ -247,7 +247,7 @@ The 'run' command handles variable replacement, cookie persistence, and test ass
 					ctx.SetEnvironment(baseEnv.Clone())
 				}
 				if len(loadedPersonas) > 0 {
-					applyPersonaToCtx(ctx, loadedPersonas[0])
+					runner.ApplyPersona(ctx, loadedPersonas[0])
 				}
 
 				exec := http_executor.NewDefaultExecutor()
@@ -353,15 +353,4 @@ func printPhase3Header(cfg runner.SchedulerConfig) {
 		color.Cyan("  |  Rate: %.1f req/s", cfg.RPS)
 	}
 	fmt.Println()
-}
-
-func applyPersonaToCtx(ctx *runner.RuntimeContext, p map[string]string) {
-	if ctx.Environment == nil {
-		return
-	}
-	for k, v := range p {
-		if k != "" {
-			ctx.Environment.Variables["persona."+k] = v
-		}
-	}
 }

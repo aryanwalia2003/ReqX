@@ -8,26 +8,42 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  EmptyState,
+  Field,
   Input,
 } from '@/components/ui'
 import { pickFile } from '@/features/collection-runner/api'
-import { useOpenCollection } from '@/features/collection-runner/hooks/useOpenCollection'
 import { useOpenEnvironment } from '@/features/collection-runner/hooks/useOpenEnvironment'
+import { useOpenPersonas } from '@/features/collection-runner/hooks/useOpenPersonas'
 import { useRunCollection } from '@/features/collection-runner/hooks/useRunCollection'
+import type { Collection } from '@/features/collection-runner/types'
 import { getErrorMessage } from '@/lib/errors'
 import { reportError } from '@/lib/reportError'
 
-/** Postman-lite ka doosra half: ek poori collection (+ optional environment) load karo, run karo, results dekho. */
-export function CollectionRunnerPanel() {
-  const [path, setPath] = useState('')
-  const [envPath, setEnvPath] = useState('')
+export interface CollectionRunnerPanelProps {
+  /** Collection chuni gayi Collections sidebar se — null jab tak kuch select na ho. */
+  selected: { path: string; collection: Collection } | null
+}
 
-  const {
-    data: collection,
-    error: openError,
-    isLoading: isOpening,
-    run: open,
-  } = useOpenCollection()
+function parsePositiveInt(s: string): number | undefined {
+  const n = parseInt(s, 10)
+  return n > 0 ? n : undefined
+}
+
+function parsePositiveFloat(s: string): number | undefined {
+  const n = parseFloat(s)
+  return n > 0 ? n : undefined
+}
+
+/** Postman-lite ka doosra half: selected collection (+ optional environment, load-test knobs) run karo, results dekho. */
+export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) {
+  const [envPath, setEnvPath] = useState('')
+  const [personasPath, setPersonasPath] = useState('')
+  const [workers, setWorkers] = useState('')
+  const [iterations, setIterations] = useState('')
+  const [durationSec, setDurationSec] = useState('')
+  const [rps, setRps] = useState('')
+
   const {
     data: environment,
     error: envError,
@@ -35,39 +51,54 @@ export function CollectionRunnerPanel() {
     run: openEnv,
   } = useOpenEnvironment()
   const {
+    data: personas,
+    error: personasError,
+    isLoading: isOpeningPersonas,
+    run: openPersonas,
+  } = useOpenPersonas()
+  const {
     data: output,
     error: runError,
     isLoading: isRunning,
     run: runCollection,
   } = useRunCollection()
 
-  async function handleOpen() {
-    await open(path)
-  }
-
   async function handleOpenEnv() {
     await openEnv(envPath)
   }
 
-  async function handleBrowseCollection() {
-    const result = await pickFile('Open collection')
-    if (!result.ok) return reportError(result.error, 'browse collection file')
-    if (!result.value) return // user cancelled
-    setPath(result.value)
-    await open(result.value)
-  }
-
   async function handleBrowseEnv() {
-    const result = await pickFile('Open environment')
+    const result = await pickFile('Open environment', 'json')
     if (!result.ok) return reportError(result.error, 'browse environment file')
     if (!result.value) return // user cancelled
     setEnvPath(result.value)
     await openEnv(result.value)
   }
 
+  async function handleOpenPersonas() {
+    await openPersonas(personasPath)
+  }
+
+  async function handleBrowsePersonas() {
+    const result = await pickFile('Open personas', 'csv')
+    if (!result.ok) return reportError(result.error, 'browse personas file')
+    if (!result.value) return // user cancelled
+    setPersonasPath(result.value)
+    await openPersonas(result.value)
+  }
+
   async function handleRun() {
-    if (!collection) return
-    await runCollection({ collection, envVariables: environment?.variables })
+    if (!selected) return
+    const durationSeconds = parsePositiveFloat(durationSec)
+    await runCollection({
+      collection: selected.collection,
+      envVariables: environment?.variables,
+      workers: parsePositiveInt(workers),
+      iterations: parsePositiveInt(iterations),
+      durationMs: durationSeconds ? Math.round(durationSeconds * 1000) : undefined,
+      rps: parsePositiveFloat(rps),
+      personas,
+    })
   }
 
   return (
@@ -77,43 +108,83 @@ export function CollectionRunnerPanel() {
           <CardTitle>Run a collection</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="flex gap-2">
-            <Input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder="collection.json"
-              className="flex-1"
-              aria-label="Collection file path"
+          {!selected && (
+            <EmptyState
+              title="No collection selected"
+              description="Pick one from the Collections sidebar, or click + Add to browse for one."
             />
-            <Button
-              variant="outline"
-              aria-label="Browse for collection file"
-              onClick={() => void handleBrowseCollection()}
-            >
-              Browse…
-            </Button>
-            <Button
-              variant="secondary"
-              isLoading={isOpening}
-              disabled={!path.trim()}
-              onClick={() => void handleOpen()}
-            >
-              Open
-            </Button>
-            <Button
-              variant="primary"
-              isLoading={isRunning}
-              disabled={!collection}
-              onClick={() => void handleRun()}
-            >
-              Run
-            </Button>
-          </div>
+          )}
 
-          {openError && (
-            <Alert variant="danger" title={`Could not open collection (${openError.kind})`}>
-              {getErrorMessage(openError)}
-            </Alert>
+          {selected && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-fg text-sm font-medium">
+                  {selected.collection.name || 'Untitled collection'} —{' '}
+                  {selected.collection.requests.length} request
+                  {selected.collection.requests.length === 1 ? '' : 's'}
+                </span>
+                <Button variant="primary" isLoading={isRunning} onClick={() => void handleRun()}>
+                  Run
+                </Button>
+              </div>
+              <div className="border-border bg-surface flex flex-col divide-y rounded-md border">
+                {selected.collection.requests.map((req, i) => (
+                  <div
+                    key={`${req.name}-${i}`}
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm"
+                  >
+                    <Badge variant="outline" className="w-16 shrink-0 justify-center">
+                      {req.method}
+                    </Badge>
+                    <span className="text-fg-muted truncate">{req.name}</span>
+                    <span className="text-fg-subtle ml-auto truncate text-xs">{req.url}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-4 gap-2">
+                <Field label="Workers (-c)">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={workers}
+                    onChange={(e) => setWorkers(e.target.value)}
+                    placeholder="1"
+                    aria-label="Workers"
+                  />
+                </Field>
+                <Field label="Iterations (-n)">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={iterations}
+                    onChange={(e) => setIterations(e.target.value)}
+                    placeholder="1"
+                    aria-label="Iterations"
+                  />
+                </Field>
+                <Field label="Duration, sec (-d)">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={durationSec}
+                    onChange={(e) => setDurationSec(e.target.value)}
+                    placeholder="none"
+                    aria-label="Duration in seconds"
+                  />
+                </Field>
+                <Field label="Rate limit (rps)">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={rps}
+                    onChange={(e) => setRps(e.target.value)}
+                    placeholder="unlimited"
+                    aria-label="Requests per second"
+                  />
+                </Field>
+              </div>
+            </>
           )}
 
           <div className="flex gap-2">
@@ -164,27 +235,42 @@ export function CollectionRunnerPanel() {
             </div>
           )}
 
-          {collection && (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-fg text-sm font-medium">
-                {collection.name || 'Untitled collection'} — {collection.requests.length} request
-                {collection.requests.length === 1 ? '' : 's'}
-              </span>
-              <div className="border-border bg-surface flex flex-col divide-y rounded-md border">
-                {collection.requests.map((req, i) => (
-                  <div
-                    key={`${req.name}-${i}`}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm"
-                  >
-                    <Badge variant="outline" className="w-16 shrink-0 justify-center">
-                      {req.method}
-                    </Badge>
-                    <span className="text-fg-muted truncate">{req.name}</span>
-                    <span className="text-fg-subtle ml-auto truncate text-xs">{req.url}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <div className="flex gap-2">
+            <Input
+              value={personasPath}
+              onChange={(e) => setPersonasPath(e.target.value)}
+              placeholder="personas.csv (optional, {{persona.<col>}})"
+              className="flex-1"
+              aria-label="Personas file path"
+            />
+            <Button
+              variant="outline"
+              aria-label="Browse for personas file"
+              onClick={() => void handleBrowsePersonas()}
+            >
+              Browse…
+            </Button>
+            <Button
+              variant="secondary"
+              isLoading={isOpeningPersonas}
+              disabled={!personasPath.trim()}
+              onClick={() => void handleOpenPersonas()}
+            >
+              Load personas
+            </Button>
+          </div>
+
+          {personasError && (
+            <Alert variant="danger" title={`Could not load personas (${personasError.kind})`}>
+              {getErrorMessage(personasError)}
+            </Alert>
+          )}
+
+          {personas && (
+            <span className="text-fg text-sm font-medium">
+              {personas.length} persona{personas.length === 1 ? '' : 's'} loaded
+              {personas.length > 1 ? ' — assigned round-robin across workers' : ''}
+            </span>
           )}
         </CardContent>
       </Card>
@@ -208,17 +294,17 @@ export function CollectionRunnerPanel() {
           </CardHeader>
           <CardContent>
             <div className="border-border bg-surface flex flex-col divide-y rounded-md border">
-              {output.results.map((r, i) => (
-                <div key={`${r.name}-${i}`} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+              {output.stats.map((s, i) => (
+                <div key={`${s.name}-${i}`} className="flex items-center gap-2 px-3 py-1.5 text-sm">
                   <Badge
-                    variant={r.errorMessage ? 'outline' : 'default'}
-                    className="w-12 shrink-0 justify-center"
+                    variant={s.failures > 0 ? 'outline' : 'default'}
+                    className="shrink-0 justify-center"
                   >
-                    {r.statusCode || '—'}
+                    {s.successes}/{s.totalRuns}
                   </Badge>
-                  <span className="text-fg-muted truncate">{r.name}</span>
+                  <span className="text-fg-muted truncate">{s.name}</span>
                   <span className="text-fg-subtle ml-auto shrink-0 text-xs">
-                    {r.errorMessage ?? `${r.durationMs} ms`}
+                    {s.topError ?? `${s.avgLatencyMs} ms avg / ${s.p95LatencyMs} ms p95`}
                   </span>
                 </div>
               ))}

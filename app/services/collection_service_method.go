@@ -1,6 +1,8 @@
 package services
 
 import (
+	"log"
+	"strings"
 	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -9,33 +11,53 @@ import (
 	"reqx/internal/environment"
 	"reqx/internal/errs"
 	"reqx/internal/metrics"
+	"reqx/internal/personas"
 	"reqx/internal/planner"
 	"reqx/internal/runner"
 	"reqx/internal/storage"
 )
 
 // RunCollectionInput carries the collection to run (as returned by Open,
-// round-tripped unedited for now) plus env vars for {{var}} substitution.
+// round-tripped unedited for now), env vars for {{var}} substitution, and
+// the same load-testing knobs as the CLI's `reqx run` flags:
+//   - Workers (-c): concurrency. <=1 runs single-threaded.
+//   - Iterations (-n): how many times to run the collection. Ignored once
+//     Duration or RPS is set — Scheduler mode runs by wall-clock time, not
+//     a fixed count, exactly like the CLI.
+//   - DurationMs (-d) / RPS (--rps): switch into Scheduler mode (duration-
+//     and/or rate-limited load test) once either is > 0.
+//   - Personas (--personas): CSV rows (as returned by OpenPersonas),
+//     round-tripped back unedited. Each column becomes {{persona.<col>}}.
+//     Scheduler/WorkerPool assign one persona per worker, round-robin by
+//     worker ID; the sequential path always uses Personas[0], same as the
+//     CLI's sequential loop (cmd/run_cmd_ctor.go).
 type RunCollectionInput struct {
 	Collection   collection.Collection `json:"collection"`
 	EnvVariables map[string]string     `json:"envVariables,omitempty"`
+	Workers      int                   `json:"workers,omitempty"`
+	Iterations   int                   `json:"iterations,omitempty"`
+	DurationMs   int64                 `json:"durationMs,omitempty"`
+	RPS          float64               `json:"rps,omitempty"`
+	Personas     []personas.Persona    `json:"personas,omitempty"`
 }
 
-// RequestResult is one request's outcome — status/timing/error, no body
-// (matches runner.RequestMetric, which drops the body to stay cheap across
-// a whole collection; use RequestService.Send to inspect one response body).
-type RequestResult struct {
-	Name          string `json:"name"`
-	Protocol      string `json:"protocol"`
-	StatusCode    int    `json:"statusCode"`
-	StatusString  string `json:"statusString"`
-	DurationMs    int64  `json:"durationMs"`
-	BytesReceived int64  `json:"bytesReceived"`
-	ErrorMessage  string `json:"errorMessage,omitempty"`
+// RequestStat is one named request's aggregated outcome across every
+// iteration it ran in — the same per-request view `reqx run`'s summary
+// prints, not a flat per-iteration list (which would be unreadable at
+// load-test scale — hundreds of iterations of the same request).
+type RequestStat struct {
+	Name         string `json:"name"`
+	TotalRuns    int    `json:"totalRuns"`
+	Successes    int    `json:"successes"`
+	Failures     int    `json:"failures"`
+	AvgLatencyMs int64  `json:"avgLatencyMs"`
+	P95LatencyMs int64  `json:"p95LatencyMs"`
+	TopError     string `json:"topError,omitempty"`
 }
 
 // RunCollectionSummary is the aggregate view — HDR-histogram-derived
-// percentiles via internal/metrics.Analyze, the same engine `reqx run` uses.
+// percentiles via internal/metrics.AnalyzeSharded, the same engine
+// `reqx run` uses.
 type RunCollectionSummary struct {
 	TotalRequests   int     `json:"totalRequests"`
 	TotalSuccess    int     `json:"totalSuccess"`
@@ -47,22 +69,23 @@ type RunCollectionSummary struct {
 }
 
 type RunCollectionOutput struct {
-	Results []RequestResult      `json:"results"`
+	Stats   []RequestStat        `json:"stats"`
 	Summary RunCollectionSummary `json:"summary"`
 }
 
-// PickFile opens the native OS file picker, filtered to .json files, and
+// PickFile opens the native OS file picker filtered to *.<extension>, and
 // returns the chosen path — empty string (no error) if the user cancels.
-// Used for both the collection and environment file inputs; title is the
-// only thing that differs between them.
-func (s *CollectionService) PickFile(title string) (string, error) {
+// One generic picker for every file input (collection/environment .json,
+// personas .csv) instead of one method per file type.
+func (s *CollectionService) PickFile(title string, extension string) (string, error) {
 	if appCtx == nil {
 		return "", errs.Internal("app is still starting up — try again in a moment")
 	}
+	pattern := "*." + extension
 	path, err := wailsruntime.OpenFileDialog(appCtx, wailsruntime.OpenDialogOptions{
 		Title: title,
 		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "JSON Files (*.json)", Pattern: "*.json"},
+			{DisplayName: strings.ToUpper(extension) + " Files (" + pattern + ")", Pattern: pattern},
 		},
 	})
 	if err != nil {
@@ -102,44 +125,140 @@ func (s *CollectionService) OpenEnvironment(path string) (environment.Environmen
 	return *env, nil
 }
 
-// Run executes every request in the collection, linearly or as a DAG
-// (whichever BuildExecutionPlan detects from depends_on), through the same
-// CollectionRunner/metrics.Analyze pipeline the CLI's `run` command uses.
+// OpenPersonas reads and parses a personas CSV file — the app-side
+// equivalent of the CLI's `--personas` flag (see cmd/run_cmd_ctor.go).
+// Every column becomes {{persona.<col>}} once passed back into Run.
+func (s *CollectionService) OpenPersonas(path string) ([]personas.Persona, error) {
+	return personas.LoadCSV(path)
+}
+
+// buildBaseEnv turns a flat var map into an Environment, or nil if there's
+// nothing to set — the load-testing paths below treat "no BaseEnv" as
+// "start from a blank environment per worker", same as the CLI.
+func buildBaseEnv(vars map[string]string) *environment.Environment {
+	if len(vars) == 0 {
+		return nil
+	}
+	env := environment.NewEnvironment("app")
+	for k, v := range vars {
+		env.Set(k, v)
+	}
+	return env
+}
+
+// Run executes the collection through whichever of the CLI's three engines
+// input's load-testing fields select — same decision the CLI's `reqx run`
+// makes between its Phase 3 Scheduler, WorkerPool, and plain sequential
+// paths (cmd/run_cmd_ctor.go):
+//   - Duration or RPS set → Scheduler (duration-/rate-limited load test).
+//   - Workers > 1 → WorkerPool (fixed concurrency, fixed iteration count).
+//   - Otherwise → sequential iterations through the shared CollectionRunner
+//     (Iterations defaults to 1 — the common single-run case).
 func (s *CollectionService) Run(input RunCollectionInput) (RunCollectionOutput, error) {
 	plan, err := planner.BuildExecutionPlan(&input.Collection, planner.PlanConfig{})
 	if err != nil {
 		return RunCollectionOutput{}, err
 	}
 
-	ctx := runner.NewRuntimeContext()
-	for k, v := range input.EnvVariables {
-		ctx.Environment.Set(k, v)
+	iterations := input.Iterations
+	if iterations < 1 {
+		iterations = 1
+	}
+	workers := input.Workers
+	if workers < 1 {
+		workers = 1
+	}
+	duration := time.Duration(input.DurationMs) * time.Millisecond
+	baseEnv := buildBaseEnv(input.EnvVariables)
+
+	// Scheduler's Duration-mode conductor only stops on ctx cancellation —
+	// with Duration==0 that context has no deadline, so RPS-without-Duration
+	// would block this call forever (same gap exists in the CLI; there
+	// there's at least a Ctrl+C, here there'd be no way to recover the UI).
+	if input.RPS > 0 && duration <= 0 {
+		return RunCollectionOutput{}, errs.InvalidInput("rps requires a duration — set durationMs")
 	}
 
+	var allMetrics [][]runner.RequestMetric
 	start := time.Now()
-	metricsOut, err := s.runner.Run(plan, ctx)
-	duration := time.Since(start)
-	if err != nil {
-		return RunCollectionOutput{}, errs.Wrap(err, errs.KindExternal, "collection run failed")
-	}
 
-	results := make([]RequestResult, len(metricsOut))
-	for i, m := range metricsOut {
-		results[i] = RequestResult{
-			Name:          m.Name,
-			Protocol:      m.Protocol,
-			StatusCode:    m.StatusCode,
-			StatusString:  m.StatusString,
-			DurationMs:    m.Duration.Milliseconds(),
-			BytesReceived: m.BytesReceived,
-			ErrorMessage:  m.ErrorMsg,
+	switch {
+	case duration > 0 || input.RPS > 0:
+		cfg := runner.SchedulerConfig{
+			Plan:       plan,
+			BaseEnv:    baseEnv,
+			Verbosity:  runner.VerbosityQuiet,
+			Duration:   duration,
+			MaxWorkers: workers,
+			RPS:        input.RPS,
+			Personas:   input.Personas,
+		}
+		for _, r := range runner.NewScheduler(cfg).Run() {
+			if r.Metrics != nil {
+				allMetrics = append(allMetrics, r.Metrics)
+			}
+		}
+
+	case workers > 1:
+		cfg := runner.WorkerConfig{
+			Plan:      plan,
+			BaseEnv:   baseEnv,
+			Verbosity: runner.VerbosityQuiet,
+			Personas:  input.Personas,
+		}
+		for _, r := range runner.NewWorkerPool(workers).Run(cfg, iterations) {
+			allMetrics = append(allMetrics, r.Metrics)
+		}
+
+	default:
+		for i := 0; i < iterations; i++ {
+			ctx := runner.NewRuntimeContext()
+			if baseEnv != nil {
+				ctx.SetEnvironment(baseEnv.Clone())
+			}
+			if len(input.Personas) > 0 {
+				runner.ApplyPersona(ctx, input.Personas[0])
+			}
+			m, runErr := s.runner.Run(plan, ctx)
+			if runErr != nil {
+				return RunCollectionOutput{}, errs.Wrap(runErr, errs.KindExternal, "collection run failed")
+			}
+			allMetrics = append(allMetrics, m)
 		}
 	}
 
-	report := metrics.Analyze([][]runner.RequestMetric{metricsOut}, duration)
+	elapsed := time.Since(start)
+	report := metrics.AnalyzeSharded(allMetrics, elapsed, 0)
+
+	if s.history != nil {
+		collectionName := input.Collection.Name
+		if collectionName == "" {
+			collectionName = "Untitled collection"
+		}
+		if saveErr := s.history.SaveRunWithDAG(collectionName, report, plan, allMetrics); saveErr != nil {
+			log.Printf("[WARN] history save failed: %v\n", saveErr)
+		}
+	}
+
+	stats := make([]RequestStat, len(report.PerRequest))
+	for i, stat := range report.PerRequest {
+		var topError string
+		if len(stat.TopErrors) > 0 {
+			topError = stat.TopErrors[0].Message
+		}
+		stats[i] = RequestStat{
+			Name:         stat.Name,
+			TotalRuns:    stat.TotalRuns,
+			Successes:    stat.Successes,
+			Failures:     stat.Failures,
+			AvgLatencyMs: stat.AvgDuration.Milliseconds(),
+			P95LatencyMs: stat.P95.Milliseconds(),
+			TopError:     topError,
+		}
+	}
 
 	return RunCollectionOutput{
-		Results: results,
+		Stats: stats,
 		Summary: RunCollectionSummary{
 			TotalRequests:   report.TotalRequests,
 			TotalSuccess:    report.TotalSuccess,
