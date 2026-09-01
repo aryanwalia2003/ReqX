@@ -76,6 +76,94 @@ describe('SendRequestPanel', () => {
     )
   })
 
+  it('sends basic auth credentials', async () => {
+    mockedSendRequest.mockResolvedValue(
+      ok({
+        statusCode: 200,
+        status: '200 OK',
+        headers: {},
+        body: '',
+        durationMs: 1,
+        bytesSent: 0,
+        bytesReceived: 0,
+      }),
+    )
+
+    render(<SendRequestPanel />)
+    await userEvent.type(screen.getByLabelText('URL'), 'https://api.example.com')
+    await userEvent.selectOptions(screen.getByLabelText('Auth type'), 'basic')
+    await userEvent.type(screen.getByLabelText('Basic auth username'), 'admin')
+    await userEvent.type(screen.getByLabelText('Basic auth password'), 'pw')
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() =>
+      expect(mockedSendRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          auth: { type: 'basic', username: 'admin', password: 'pw' },
+        }),
+      ),
+    )
+  })
+
+  it('sends an API key in the configured location', async () => {
+    mockedSendRequest.mockResolvedValue(
+      ok({
+        statusCode: 200,
+        status: '200 OK',
+        headers: {},
+        body: '',
+        durationMs: 1,
+        bytesSent: 0,
+        bytesReceived: 0,
+      }),
+    )
+
+    render(<SendRequestPanel />)
+    await userEvent.type(screen.getByLabelText('URL'), 'https://api.example.com')
+    await userEvent.selectOptions(screen.getByLabelText('Auth type'), 'apikey')
+    await userEvent.type(screen.getByLabelText('API key name'), 'X-Api-Key')
+    await userEvent.type(screen.getByLabelText('API key value'), 'secret')
+    await userEvent.selectOptions(screen.getByLabelText('API key location'), 'query')
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() =>
+      expect(mockedSendRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          auth: { type: 'apikey', key: 'X-Api-Key', value: 'secret', in: 'query' },
+        }),
+      ),
+    )
+  })
+
+  it('sends cookie auth rows', async () => {
+    mockedSendRequest.mockResolvedValue(
+      ok({
+        statusCode: 200,
+        status: '200 OK',
+        headers: {},
+        body: '',
+        durationMs: 1,
+        bytesSent: 0,
+        bytesReceived: 0,
+      }),
+    )
+
+    render(<SendRequestPanel />)
+    await userEvent.type(screen.getByLabelText('URL'), 'https://api.example.com')
+    await userEvent.selectOptions(screen.getByLabelText('Auth type'), 'cookie')
+    await userEvent.type(screen.getByLabelText('Cookie name'), 'session')
+    await userEvent.type(screen.getByLabelText('Cookie value'), 'abc123')
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() =>
+      expect(mockedSendRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          auth: { type: 'cookie', cookies: { session: 'abc123' } },
+        }),
+      ),
+    )
+  })
+
   it('initializes the form from loadRequest (e.g. a request opened from the sidebar)', () => {
     render(
       <SendRequestPanel

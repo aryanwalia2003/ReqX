@@ -6,6 +6,7 @@ import type { Collection } from '@/features/collection-runner'
 import { HistoryPanel } from '@/features/history'
 import { SendRequestPanel } from '@/features/send-request'
 import type { SendRequestInput } from '@/features/send-request'
+import { SocketDebuggerPanel } from '@/features/socket-debugger'
 
 function App() {
   const [activeTab, setActiveTab] = useState('send')
@@ -47,6 +48,7 @@ function App() {
             <TabsList>
               <TabsTrigger value="send">Send request</TabsTrigger>
               <TabsTrigger value="run">Run collection</TabsTrigger>
+              <TabsTrigger value="socket">Socket debugger</TabsTrigger>
               <TabsTrigger value="history">History</TabsTrigger>
             </TabsList>
             <TabsContent value="send" className="pt-4">
@@ -54,6 +56,9 @@ function App() {
             </TabsContent>
             <TabsContent value="run" className="pt-4">
               <CollectionRunnerPanel selected={selected} />
+            </TabsContent>
+            <TabsContent value="socket" className="pt-4">
+              <SocketDebuggerPanel />
             </TabsContent>
             <TabsContent value="history" className="pt-4">
               <HistoryPanel />

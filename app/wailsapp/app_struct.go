@@ -14,4 +14,5 @@ type App struct {
 	Request    *services.RequestService
 	Collection *services.CollectionService
 	History    *services.HistoryService
+	Socket     *services.SocketService
 }

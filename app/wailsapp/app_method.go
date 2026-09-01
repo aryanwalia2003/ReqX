@@ -16,6 +16,7 @@ func (a *App) BindTargets() []interface{} {
 		a.Request,
 		a.Collection,
 		a.History,
+		a.Socket,
 	}
 }
 

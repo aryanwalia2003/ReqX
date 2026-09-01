@@ -27,6 +27,7 @@ import type {
 } from '@/features/collection-runner/types'
 import type { RunRow, StatRow } from '@/features/history/types'
 import type { SendRequestInput, SendRequestOutput } from '@/features/send-request/types'
+import type { ConnectSocketInput } from '@/features/socket-debugger/types'
 
 declare global {
   interface Window {
@@ -37,6 +38,7 @@ declare global {
         }
         CollectionService?: {
           PickFile(title: string, extension: string): Promise<string>
+          PickSaveFile(title: string, defaultFilename: string): Promise<string>
           Open(path: string): Promise<Collection>
           OpenEnvironment(path: string): Promise<Environment>
           OpenPersonas(path: string): Promise<Persona[]>
@@ -46,7 +48,18 @@ declare global {
           ListRuns(limit: number): Promise<RunRow[]>
           GetRunStats(runId: string): Promise<StatRow[]>
         }
+        SocketService?: {
+          Connect(input: ConnectSocketInput): Promise<void>
+          Send(text: string): Promise<void>
+          Emit(eventName: string, payload: string): Promise<void>
+          Disconnect(): Promise<void>
+          IsConnected(): Promise<boolean>
+        }
       }
+    }
+    runtime?: {
+      EventsOn(eventName: string, callback: (...data: unknown[]) => void): () => void
+      EventsOff(eventName: string): void
     }
   }
 }

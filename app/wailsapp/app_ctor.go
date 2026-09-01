@@ -26,5 +26,6 @@ func NewApp() *App {
 		Request:    services.NewRequestService(),
 		Collection: services.NewCollectionService(db),
 		History:    services.NewHistoryService(db),
+		Socket:     services.NewSocketService(),
 	}
 }
