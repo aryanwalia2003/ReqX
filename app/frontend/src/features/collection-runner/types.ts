@@ -1,5 +1,6 @@
 // Types local to the "collection-runner" feature.
 
+import type { DagNodeRow } from '@/features/history'
 import type { AuthConfig } from '@/features/send-request'
 
 /** Not every field internal/collection.Request (Go) carries — it also has
@@ -36,7 +37,9 @@ export type Persona = Record<string, string>
  * Mirrors app/services.RunCollectionInput (Go). workers/iterations/durationMs/rps
  * are the same load-testing knobs as the CLI's `reqx run -c/-n/-d/--rps` —
  * all optional, all default to a single-pass run when omitted. personas is
- * the CLI's `--personas` CSV, round-tripped from OpenPersonas.
+ * the CLI's `--personas` CSV, round-tripped from OpenPersonas. stages/
+ * noCookies/clearCookies/graphql/exportPath/inject* mirror --stages,
+ * --no-cookies, --clear-cookies, --graphql, --export, and --inject-*.
  */
 export interface RunCollectionInput {
   collection: Collection
@@ -46,6 +49,17 @@ export interface RunCollectionInput {
   durationMs?: number
   rps?: number
   personas?: Persona[]
+  stages?: string
+  noCookies?: boolean
+  clearCookies?: boolean
+  graphql?: boolean
+  exportPath?: string
+  injectIndex?: string
+  injectName?: string
+  injectMethod?: string
+  injectUrl?: string
+  injectBody?: string
+  injectHeaders?: string[]
 }
 
 /** Mirrors app/services.RequestStat (Go) — aggregated across every iteration
@@ -71,8 +85,10 @@ export interface RunCollectionSummary {
   totalDurationMs: number
 }
 
-/** Mirrors app/services.RunCollectionOutput (Go). */
+/** Mirrors app/services.RunCollectionOutput (Go). dagNodes is only present
+ * when the collection has depends_on edges. */
 export interface RunCollectionOutput {
   stats: RequestStat[]
   summary: RunCollectionSummary
+  dagNodes?: DagNodeRow[]
 }

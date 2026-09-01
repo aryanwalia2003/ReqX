@@ -65,19 +65,15 @@ func (d *DB) SaveRunWithDAG(
 	return tx.Commit()
 }
 
-// insertDAGNodes writes one row per graph node into dag_nodes.
-// Level index is computed via TopoSort so the UI can use it for layout.
-// Only the first iteration's metrics are stored — sufficient for per-node
-// duration and status in the graph view.
-func insertDAGNodes(
-	tx *sql.Tx,
-	runID string,
-	plan *planner.ExecutionPlan,
-	firstMetrics []runner.RequestMetric,
-) error {
+// ComputeDAGNodes derives the DAG node rows (status, duration, level,
+// deps) for one plan + its first-iteration metrics — pure, no DB
+// involved. Shared by insertDAGNodes (persists them for later history
+// lookup) and app/services.CollectionService.Run (returns them for the
+// just-completed run without a round-trip through storage).
+func ComputeDAGNodes(plan *planner.ExecutionPlan, firstMetrics []runner.RequestMetric) ([]DagNodeRow, error) {
 	levels, err := dag.TopoSort(plan.DAG)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Build a lookup: request index → level index.
@@ -94,6 +90,7 @@ func insertDAGNodes(
 		metricOf[m.Name] = m
 	}
 
+	nodes := make([]DagNodeRow, len(plan.Requests))
 	for i, req := range plan.Requests {
 		// Determine status string for this node.
 		status := "skipped"
@@ -112,12 +109,39 @@ func insertDAGNodes(
 			durationMs = m.Duration.Milliseconds()
 		}
 
+		nodes[i] = DagNodeRow{
+			Name:       req.Name,
+			Status:     status,
+			DurationMs: durationMs,
+			LevelIdx:   levelOf[i],
+			DependsOn:  req.DependsOn,
+		}
+	}
+
+	return nodes, nil
+}
+
+// insertDAGNodes writes one row per graph node into dag_nodes.
+// Only the first iteration's metrics are stored — sufficient for per-node
+// duration and status in the graph view.
+func insertDAGNodes(
+	tx *sql.Tx,
+	runID string,
+	plan *planner.ExecutionPlan,
+	firstMetrics []runner.RequestMetric,
+) error {
+	nodes, err := ComputeDAGNodes(plan, firstMetrics)
+	if err != nil {
+		return err
+	}
+
+	for _, n := range nodes {
 		// Serialize depends_on as a JSON array.
-		depsJSON, _ := json.Marshal(req.DependsOn)
+		depsJSON, _ := json.Marshal(n.DependsOn)
 
 		if _, err := tx.Exec(
 			`INSERT INTO dag_nodes(run_id,name,status,duration_ms,level_idx,depends_on) VALUES(?,?,?,?,?,?)`,
-			runID, req.Name, status, durationMs, levelOf[i], string(depsJSON),
+			runID, n.Name, n.Status, n.DurationMs, n.LevelIdx, string(depsJSON),
 		); err != nil {
 			return err
 		}

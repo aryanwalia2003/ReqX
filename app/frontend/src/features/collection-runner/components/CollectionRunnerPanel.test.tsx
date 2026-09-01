@@ -6,6 +6,7 @@ import {
   openEnvironment,
   openPersonas,
   pickFile,
+  pickSaveFile,
   runCollection,
 } from '@/features/collection-runner/api'
 import { err, ok } from '@/lib/result'
@@ -14,12 +15,14 @@ import { CollectionRunnerPanel } from './CollectionRunnerPanel'
 
 vi.mock('@/features/collection-runner/api', () => ({
   pickFile: vi.fn(),
+  pickSaveFile: vi.fn(),
   openEnvironment: vi.fn(),
   openPersonas: vi.fn(),
   runCollection: vi.fn(),
 }))
 
 const mockedPickFile = vi.mocked(pickFile)
+const mockedPickSaveFile = vi.mocked(pickSaveFile)
 const mockedOpenEnv = vi.mocked(openEnvironment)
 const mockedOpenPersonas = vi.mocked(openPersonas)
 const mockedRun = vi.mocked(runCollection)
@@ -30,6 +33,16 @@ const demoCollection = {
     name: 'Demo',
     requests: [{ name: 'Get user', method: 'GET', url: 'https://api.example.com/user' }],
   },
+}
+
+const emptySummary = {
+  totalRequests: 0,
+  totalSuccess: 0,
+  totalFailures: 0,
+  successRate: 0,
+  avgLatencyMs: 0,
+  p95LatencyMs: 0,
+  totalDurationMs: 0,
 }
 
 describe('CollectionRunnerPanel', () => {
@@ -242,5 +255,100 @@ describe('CollectionRunnerPanel', () => {
     await waitFor(() => expect(mockedPickFile).toHaveBeenCalled())
     expect(mockedOpenEnv).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Environment file path')).toHaveValue('')
+  })
+
+  it('advanced options are hidden until toggled, then pass through to Run', async () => {
+    mockedRun.mockResolvedValue(ok({ stats: [], summary: emptySummary }))
+
+    render(<CollectionRunnerPanel selected={demoCollection} />)
+    expect(screen.queryByLabelText('Stages')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced options' }))
+    expect(screen.getByLabelText('Stages')).toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Stages'), '10s:5,30s:20,10s:0')
+    await userEvent.click(screen.getByText('No cookies'))
+    await userEvent.click(screen.getByText('Clear cookies per request'))
+    await userEvent.click(screen.getByText('GraphQL error detection'))
+    await userEvent.type(screen.getByLabelText('Inject position'), '1')
+    await userEvent.type(screen.getByLabelText('Inject name'), 'Health check')
+    await userEvent.type(screen.getByLabelText('Inject URL'), 'https://api.example.com/health')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Run' }))
+
+    await waitFor(() =>
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stages: '10s:5,30s:20,10s:0',
+          noCookies: true,
+          clearCookies: true,
+          graphql: true,
+          injectIndex: '1',
+          injectName: 'Health check',
+          injectMethod: 'GET',
+          injectUrl: 'https://api.example.com/health',
+        }),
+      ),
+    )
+  })
+
+  it('browsing for an export location fills the path and passes it into Run', async () => {
+    mockedPickSaveFile.mockResolvedValue(ok('/home/dev/results.ndjson'))
+    mockedRun.mockResolvedValue(ok({ stats: [], summary: emptySummary }))
+
+    render(<CollectionRunnerPanel selected={demoCollection} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced options' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Browse (save)…' }))
+
+    expect(mockedPickSaveFile).toHaveBeenCalledWith('Export results', 'results.ndjson')
+    await waitFor(() =>
+      expect(screen.getByLabelText('Export path')).toHaveValue('/home/dev/results.ndjson'),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Run' }))
+
+    await waitFor(() =>
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({ exportPath: '/home/dev/results.ndjson' }),
+      ),
+    )
+  })
+
+  it('shows the execution graph grouped by level when the run has DAG nodes', async () => {
+    mockedRun.mockResolvedValue(
+      ok({
+        stats: [],
+        summary: emptySummary,
+        dagNodes: [
+          { name: 'First', status: 'success', duration_ms: 10, level_idx: 0, depends_on: [] },
+          {
+            name: 'Second',
+            status: 'failed',
+            duration_ms: 20,
+            level_idx: 1,
+            depends_on: ['First'],
+          },
+        ],
+      }),
+    )
+
+    render(<CollectionRunnerPanel selected={demoCollection} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Run' }))
+
+    expect(await screen.findByText('Execution graph')).toBeInTheDocument()
+    expect(screen.getByText('Level 0')).toBeInTheDocument()
+    expect(screen.getByText('Level 1')).toBeInTheDocument()
+    expect(screen.getByText(/First · success · 10 ms/)).toBeInTheDocument()
+    expect(screen.getByText(/Second · failed · 20 ms/)).toBeInTheDocument()
+  })
+
+  it('does not show the execution graph for a linear run', async () => {
+    mockedRun.mockResolvedValue(ok({ stats: [], summary: emptySummary }))
+
+    render(<CollectionRunnerPanel selected={demoCollection} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Run' }))
+
+    await waitFor(() => expect(mockedRun).toHaveBeenCalled())
+    expect(screen.queryByText('Execution graph')).not.toBeInTheDocument()
   })
 })

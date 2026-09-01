@@ -10,6 +10,8 @@ import (
 	"reqx/internal/collection"
 	"reqx/internal/environment"
 	"reqx/internal/errs"
+	"reqx/internal/history"
+	"reqx/internal/http_executor"
 	"reqx/internal/metrics"
 	"reqx/internal/personas"
 	"reqx/internal/planner"
@@ -31,14 +33,37 @@ import (
 //     Scheduler/WorkerPool assign one persona per worker, round-robin by
 //     worker ID; the sequential path always uses Personas[0], same as the
 //     CLI's sequential loop (cmd/run_cmd_ctor.go).
+//   - Stages (--stages): a ramp plan string, e.g. "10s:5,30s:20,10s:0" —
+//     parsed via runner.ParseStages, same syntax the CLI accepts. Setting
+//     it also switches into Scheduler mode, same as Duration/RPS.
+//   - NoCookies/ClearCookies/GraphQL: the CLI's --no-cookies/--clear-cookies/
+//     --graphql flags.
+//   - ExportPath: the CLI's --export — writes raw metrics as
+//     newline-delimited JSON there after the run (best-effort; a failure
+//     is logged, not returned as a run error, same as the CLI).
+//   - InjectIndex/Name/Method/URL/Body/Headers: the CLI's --inject-* flags
+//     — a temporary request inserted into the plan without touching the
+//     saved collection. InjectHeaders is "Key: Value" strings, same as
+//     --inject-header.
 type RunCollectionInput struct {
-	Collection   collection.Collection `json:"collection"`
-	EnvVariables map[string]string     `json:"envVariables,omitempty"`
-	Workers      int                   `json:"workers,omitempty"`
-	Iterations   int                   `json:"iterations,omitempty"`
-	DurationMs   int64                 `json:"durationMs,omitempty"`
-	RPS          float64               `json:"rps,omitempty"`
-	Personas     []personas.Persona    `json:"personas,omitempty"`
+	Collection    collection.Collection `json:"collection"`
+	EnvVariables  map[string]string     `json:"envVariables,omitempty"`
+	Workers       int                   `json:"workers,omitempty"`
+	Iterations    int                   `json:"iterations,omitempty"`
+	DurationMs    int64                 `json:"durationMs,omitempty"`
+	RPS           float64               `json:"rps,omitempty"`
+	Personas      []personas.Persona    `json:"personas,omitempty"`
+	Stages        string                `json:"stages,omitempty"`
+	NoCookies     bool                  `json:"noCookies,omitempty"`
+	ClearCookies  bool                  `json:"clearCookies,omitempty"`
+	GraphQL       bool                  `json:"graphql,omitempty"`
+	ExportPath    string                `json:"exportPath,omitempty"`
+	InjectIndex   string                `json:"injectIndex,omitempty"`
+	InjectName    string                `json:"injectName,omitempty"`
+	InjectMethod  string                `json:"injectMethod,omitempty"`
+	InjectURL     string                `json:"injectUrl,omitempty"`
+	InjectBody    string                `json:"injectBody,omitempty"`
+	InjectHeaders []string              `json:"injectHeaders,omitempty"`
 }
 
 // RequestStat is one named request's aggregated outcome across every
@@ -68,9 +93,14 @@ type RunCollectionSummary struct {
 	TotalDurationMs int64   `json:"totalDurationMs"`
 }
 
+// RunCollectionOutput.DagNodes is only populated when the collection has
+// depends_on edges (BuildExecutionPlan detected a DAG) — nil/omitted for a
+// plain linear collection. Reuses internal/history.DagNodeRow — the exact
+// same shape HistoryService.GetDAGNodes returns for a past run.
 type RunCollectionOutput struct {
-	Stats   []RequestStat        `json:"stats"`
-	Summary RunCollectionSummary `json:"summary"`
+	Stats    []RequestStat        `json:"stats"`
+	Summary  RunCollectionSummary `json:"summary"`
+	DagNodes []history.DagNodeRow `json:"dagNodes,omitempty"`
 }
 
 // PickFile opens the native OS file picker filtered to *.<extension>, and
@@ -90,6 +120,23 @@ func (s *CollectionService) PickFile(title string, extension string) (string, er
 	})
 	if err != nil {
 		return "", errs.Wrap(err, errs.KindInternal, "could not open file picker")
+	}
+	return path, nil
+}
+
+// PickSaveFile opens the native OS save dialog defaulted to defaultFilename,
+// and returns the chosen path — empty string (no error) if the user
+// cancels. Used for Run's ExportPath (--export).
+func (s *CollectionService) PickSaveFile(title string, defaultFilename string) (string, error) {
+	if appCtx == nil {
+		return "", errs.Internal("app is still starting up — try again in a moment")
+	}
+	path, err := wailsruntime.SaveFileDialog(appCtx, wailsruntime.SaveDialogOptions{
+		Title:           title,
+		DefaultFilename: defaultFilename,
+	})
+	if err != nil {
+		return "", errs.Wrap(err, errs.KindInternal, "could not open save dialog")
 	}
 	return path, nil
 }
@@ -132,6 +179,35 @@ func (s *CollectionService) OpenPersonas(path string) ([]personas.Persona, error
 	return personas.LoadCSV(path)
 }
 
+// sequentialRunner picks which CollectionRunner the sequential path uses.
+// The fast path (s.runner) is shared across every call for the app's
+// lifetime specifically so connections and cookies persist BETWEEN
+// separate Run clicks — but NoCookies/ClearCookies/GraphQL are per-call
+// settings mutated on the runner/executor itself (SetClearCookiesPerRequest,
+// SetGraphQLErrorCheck, DisableCookies), so applying them to the shared
+// runner would leak into every future call, including ones that never
+// asked for them. When any is requested, build a one-off runner instead —
+// same pattern the CLI's sequential loop already uses (a fresh
+// http_executor.NewDefaultExecutor() every iteration, cmd/run_cmd_ctor.go).
+func (s *CollectionService) sequentialRunner(noCookies, clearCookies, graphqlCheck bool) *runner.CollectionRunner {
+	if !noCookies && !clearCookies && !graphqlCheck {
+		return s.runner
+	}
+	exec := http_executor.NewDefaultExecutor()
+	if noCookies {
+		exec.DisableCookies()
+	}
+	cr := runner.NewCollectionRunner(exec, nil, nil, nil)
+	cr.SetVerbosity(runner.VerbosityQuiet)
+	if clearCookies {
+		cr.SetClearCookiesPerRequest(true)
+	}
+	if graphqlCheck {
+		cr.SetGraphQLErrorCheck(true)
+	}
+	return cr
+}
+
 // buildBaseEnv turns a flat var map into an Environment, or nil if there's
 // nothing to set — the load-testing paths below treat "no BaseEnv" as
 // "start from a blank environment per worker", same as the CLI.
@@ -150,12 +226,20 @@ func buildBaseEnv(vars map[string]string) *environment.Environment {
 // input's load-testing fields select — same decision the CLI's `reqx run`
 // makes between its Phase 3 Scheduler, WorkerPool, and plain sequential
 // paths (cmd/run_cmd_ctor.go):
-//   - Duration or RPS set → Scheduler (duration-/rate-limited load test).
+//   - Duration, RPS, or Stages set → Scheduler (duration-/rate-/ramp-limited
+//     load test).
 //   - Workers > 1 → WorkerPool (fixed concurrency, fixed iteration count).
 //   - Otherwise → sequential iterations through the shared CollectionRunner
 //     (Iterations defaults to 1 — the common single-run case).
 func (s *CollectionService) Run(input RunCollectionInput) (RunCollectionOutput, error) {
-	plan, err := planner.BuildExecutionPlan(&input.Collection, planner.PlanConfig{})
+	plan, err := planner.BuildExecutionPlan(&input.Collection, planner.PlanConfig{
+		InjIndex:   input.InjectIndex,
+		InjName:    input.InjectName,
+		InjMethod:  input.InjectMethod,
+		InjURL:     input.InjectURL,
+		InjBody:    input.InjectBody,
+		InjHeaders: input.InjectHeaders,
+	})
 	if err != nil {
 		return RunCollectionOutput{}, err
 	}
@@ -171,27 +255,41 @@ func (s *CollectionService) Run(input RunCollectionInput) (RunCollectionOutput, 
 	duration := time.Duration(input.DurationMs) * time.Millisecond
 	baseEnv := buildBaseEnv(input.EnvVariables)
 
+	var stages []runner.Stage
+	if input.Stages != "" {
+		stages, err = runner.ParseStages(input.Stages)
+		if err != nil {
+			return RunCollectionOutput{}, err
+		}
+	}
+
 	// Scheduler's Duration-mode conductor only stops on ctx cancellation —
-	// with Duration==0 that context has no deadline, so RPS-without-Duration
-	// would block this call forever (same gap exists in the CLI; there
-	// there's at least a Ctrl+C, here there'd be no way to recover the UI).
-	if input.RPS > 0 && duration <= 0 {
-		return RunCollectionOutput{}, errs.InvalidInput("rps requires a duration — set durationMs")
+	// with Duration==0 (and no Stages, which terminate on their own once
+	// every stage's timer fires) that context has no deadline, so
+	// RPS-without-Duration-or-Stages would block this call forever (same
+	// gap exists in the CLI; there's at least a Ctrl+C there, here there'd
+	// be no way to recover the UI).
+	if input.RPS > 0 && duration <= 0 && len(stages) == 0 {
+		return RunCollectionOutput{}, errs.InvalidInput("rps requires a duration or stages")
 	}
 
 	var allMetrics [][]runner.RequestMetric
 	start := time.Now()
 
 	switch {
-	case duration > 0 || input.RPS > 0:
+	case duration > 0 || input.RPS > 0 || len(stages) > 0:
 		cfg := runner.SchedulerConfig{
-			Plan:       plan,
-			BaseEnv:    baseEnv,
-			Verbosity:  runner.VerbosityQuiet,
-			Duration:   duration,
-			MaxWorkers: workers,
-			RPS:        input.RPS,
-			Personas:   input.Personas,
+			Plan:         plan,
+			BaseEnv:      baseEnv,
+			Verbosity:    runner.VerbosityQuiet,
+			Duration:     duration,
+			MaxWorkers:   workers,
+			RPS:          input.RPS,
+			Stages:       stages,
+			Personas:     input.Personas,
+			NoCookies:    input.NoCookies,
+			ClearCookies: input.ClearCookies,
+			GraphQL:      input.GraphQL,
 		}
 		for _, r := range runner.NewScheduler(cfg).Run() {
 			if r.Metrics != nil {
@@ -201,16 +299,20 @@ func (s *CollectionService) Run(input RunCollectionInput) (RunCollectionOutput, 
 
 	case workers > 1:
 		cfg := runner.WorkerConfig{
-			Plan:      plan,
-			BaseEnv:   baseEnv,
-			Verbosity: runner.VerbosityQuiet,
-			Personas:  input.Personas,
+			Plan:         plan,
+			BaseEnv:      baseEnv,
+			Verbosity:    runner.VerbosityQuiet,
+			Personas:     input.Personas,
+			NoCookies:    input.NoCookies,
+			ClearCookies: input.ClearCookies,
+			GraphQL:      input.GraphQL,
 		}
 		for _, r := range runner.NewWorkerPool(workers).Run(cfg, iterations) {
 			allMetrics = append(allMetrics, r.Metrics)
 		}
 
 	default:
+		activeRunner := s.sequentialRunner(input.NoCookies, input.ClearCookies, input.GraphQL)
 		for i := 0; i < iterations; i++ {
 			ctx := runner.NewRuntimeContext()
 			if baseEnv != nil {
@@ -219,7 +321,7 @@ func (s *CollectionService) Run(input RunCollectionInput) (RunCollectionOutput, 
 			if len(input.Personas) > 0 {
 				runner.ApplyPersona(ctx, input.Personas[0])
 			}
-			m, runErr := s.runner.Run(plan, ctx)
+			m, runErr := activeRunner.Run(plan, ctx)
 			if runErr != nil {
 				return RunCollectionOutput{}, errs.Wrap(runErr, errs.KindExternal, "collection run failed")
 			}
@@ -230,6 +332,12 @@ func (s *CollectionService) Run(input RunCollectionInput) (RunCollectionOutput, 
 	elapsed := time.Since(start)
 	report := metrics.AnalyzeSharded(allMetrics, elapsed, 0)
 
+	if input.ExportPath != "" {
+		if exportErr := metrics.ExportJSON(allMetrics, input.ExportPath); exportErr != nil {
+			log.Printf("[WARN] export failed: %v\n", exportErr)
+		}
+	}
+
 	if s.history != nil {
 		collectionName := input.Collection.Name
 		if collectionName == "" {
@@ -237,6 +345,15 @@ func (s *CollectionService) Run(input RunCollectionInput) (RunCollectionOutput, 
 		}
 		if saveErr := s.history.SaveRunWithDAG(collectionName, report, plan, allMetrics); saveErr != nil {
 			log.Printf("[WARN] history save failed: %v\n", saveErr)
+		}
+	}
+
+	var dagNodes []history.DagNodeRow
+	if plan.DAG != nil && len(allMetrics) > 0 {
+		if nodes, dagErr := history.ComputeDAGNodes(plan, allMetrics[0]); dagErr == nil {
+			dagNodes = nodes
+		} else {
+			log.Printf("[WARN] dag node computation failed: %v\n", dagErr)
 		}
 	}
 
@@ -258,7 +375,8 @@ func (s *CollectionService) Run(input RunCollectionInput) (RunCollectionOutput, 
 	}
 
 	return RunCollectionOutput{
-		Stats: stats,
+		Stats:    stats,
+		DagNodes: dagNodes,
 		Summary: RunCollectionSummary{
 			TotalRequests:   report.TotalRequests,
 			TotalSuccess:    report.TotalSuccess,

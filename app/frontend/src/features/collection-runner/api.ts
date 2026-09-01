@@ -4,6 +4,7 @@ import {
   OpenEnvironment,
   OpenPersonas,
   PickFile,
+  PickSaveFile,
   Run,
 } from '@wails/go/services/CollectionService'
 
@@ -12,6 +13,11 @@ import type { RunCollectionInput } from './types'
 /** Native OS file picker kholta, *.<extension> filtered — user cancel kare to empty string milta, error nahi. */
 export function pickFile(title: string, extension: string) {
   return toResult(PickFile(title, extension))
+}
+
+/** Native OS save dialog — Export results (--export) ke liye. */
+export function pickSaveFile(title: string, defaultFilename: string) {
+  return toResult(PickSaveFile(title, defaultFilename))
 }
 
 /** Collection file parse karke uske requests laata — CLI ke `reqx run` jaisa hi read path. */

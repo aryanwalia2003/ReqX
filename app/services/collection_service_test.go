@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -300,5 +301,239 @@ func TestCollectionService_Run_RPSWithoutDuration_Rejected(t *testing.T) {
 
 	if _, err := s.Run(input); err == nil {
 		t.Fatal("expected an error for rps without a duration (would hang the Scheduler forever), got nil")
+	}
+}
+
+func TestCollectionService_Run_RPSWithStages_Allowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := NewCollectionService(nil)
+	input := RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{{Name: "Ping", Method: "GET", URL: srv.URL}},
+		},
+		RPS:    10,
+		Stages: "100ms:1",
+	}
+
+	// Stages terminate on their own (no ctx deadline needed), so RPS+Stages
+	// without Duration must NOT be rejected the way RPS-alone is.
+	if _, err := s.Run(input); err != nil {
+		t.Fatalf("Run() error = %v, want nil (stages provide their own termination)", err)
+	}
+}
+
+func TestCollectionService_Run_NoCookiesSequential(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/set" {
+			http.SetCookie(w, &http.Cookie{Name: "sess", Value: "abc"})
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// /check
+		_, err := r.Cookie("sess")
+		if err == nil {
+			w.WriteHeader(http.StatusConflict) // cookie leaked through
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	s := NewCollectionService(nil)
+	input := RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{
+				{Name: "Set", Method: "GET", URL: srv.URL + "/set"},
+				{Name: "Check", Method: "GET", URL: srv.URL + "/check"},
+			},
+		},
+		NoCookies: true,
+	}
+
+	out, err := s.Run(input)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(out.Stats) != 2 || out.Stats[1].Failures != 0 {
+		t.Errorf("Stats = %+v, want 'Check' to succeed (no cookie jar means nothing to leak)", out.Stats)
+	}
+
+	// A later call without NoCookies must NOT be permanently affected by the
+	// one-off no-cookies runner built for the call above (sequentialRunner
+	// must not have mutated the shared s.runner) — cookies should flow
+	// normally again, so /check now DOES see the cookie /set left behind
+	// (the handler reports that as a 409, by design — see above).
+	out2, err := s.Run(RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{
+				{Name: "Set", Method: "GET", URL: srv.URL + "/set"},
+				{Name: "Check", Method: "GET", URL: srv.URL + "/check"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if len(out2.Stats) != 2 || out2.Stats[1].Failures != 1 {
+		t.Errorf("second run Stats = %+v, want 'Check' to fail with 409 (cookie jar enabled by default, so it sees the cookie)", out2.Stats)
+	}
+}
+
+func TestCollectionService_Run_GraphQLErrorDetection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK) // GraphQL: 200 OK even on a business-rule failure
+		_, _ = w.Write([]byte(`{"errors":[{"message":"not authorized"}]}`))
+	}))
+	defer srv.Close()
+
+	s := NewCollectionService(nil)
+
+	withoutFlag, err := s.Run(RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{{Name: "Query", Method: "POST", URL: srv.URL}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if withoutFlag.Summary.TotalFailures != 0 {
+		t.Errorf("without GraphQL flag: TotalFailures = %d, want 0 (200 OK counts as success)", withoutFlag.Summary.TotalFailures)
+	}
+
+	withFlag, err := s.Run(RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{{Name: "Query", Method: "POST", URL: srv.URL}},
+		},
+		GraphQL: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if withFlag.Summary.TotalFailures != 1 {
+		t.Errorf("with GraphQL flag: TotalFailures = %d, want 1 (errors array detected)", withFlag.Summary.TotalFailures)
+	}
+}
+
+func TestCollectionService_Run_Injection(t *testing.T) {
+	var gotPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := NewCollectionService(nil)
+	input := RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{{Name: "Existing", Method: "GET", URL: srv.URL + "/existing"}},
+		},
+		InjectIndex:  "1",
+		InjectName:   "Injected",
+		InjectMethod: "GET",
+		InjectURL:    srv.URL + "/injected",
+	}
+
+	if _, err := s.Run(input); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(gotPaths) != 2 || gotPaths[0] != "/injected" || gotPaths[1] != "/existing" {
+		t.Errorf("paths hit = %v, want [/injected, /existing] (injected at index 1)", gotPaths)
+	}
+}
+
+func TestCollectionService_Run_ExportPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	exportPath := filepath.Join(t.TempDir(), "export.ndjson")
+	s := NewCollectionService(nil)
+	input := RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{{Name: "Ping", Method: "GET", URL: srv.URL}},
+		},
+		ExportPath: exportPath,
+	}
+
+	if _, err := s.Run(input); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatalf("export file not written: %v", err)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(data, &rec); err != nil {
+		t.Fatalf("export file isn't valid JSON: %v (content: %s)", err, data)
+	}
+	if rec["name"] != "Ping" {
+		t.Errorf("exported record name = %v, want 'Ping'", rec["name"])
+	}
+}
+
+func TestCollectionService_Run_DagNodes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := NewCollectionService(nil)
+	input := RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{
+				{Name: "First", Method: "GET", URL: srv.URL + "/1"},
+				{Name: "Second", Method: "GET", URL: srv.URL + "/2", DependsOn: []string{"First"}},
+			},
+		},
+	}
+
+	out, err := s.Run(input)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(out.DagNodes) != 2 {
+		t.Fatalf("len(DagNodes) = %d, want 2 (collection has depends_on)", len(out.DagNodes))
+	}
+	byName := map[string]int{}
+	for _, n := range out.DagNodes {
+		byName[n.Name] = n.LevelIdx
+	}
+	if byName["First"] != 0 || byName["Second"] != 1 {
+		t.Errorf("levels = %+v, want First=0, Second=1", byName)
+	}
+}
+
+func TestCollectionService_Run_NoDagNodesForLinearCollection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := NewCollectionService(nil)
+	out, err := s.Run(RunCollectionInput{
+		Collection: collection.Collection{
+			Requests: []collection.Request{{Name: "Ping", Method: "GET", URL: srv.URL}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(out.DagNodes) != 0 {
+		t.Errorf("DagNodes = %+v, want empty for a linear (no depends_on) collection", out.DagNodes)
+	}
+}
+
+func TestCollectionService_PickSaveFile_BeforeStartup(t *testing.T) {
+	appCtx = nil
+	s := NewCollectionService(nil)
+	if _, err := s.PickSaveFile("Export results", "results.ndjson"); err == nil {
+		t.Fatal("expected an error calling PickSaveFile before OnStartup, got nil")
 	}
 }

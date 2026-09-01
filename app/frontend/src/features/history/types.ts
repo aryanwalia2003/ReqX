@@ -21,3 +21,15 @@ export interface StatRow {
   p95_ms: number
   avg_ms: number
 }
+
+/** Mirrors internal/history.DagNodeRow (Go) — one node in a collection's
+ * dependency graph (only present when it has depends_on edges). Used both
+ * for a past run (HistoryService.GetRunStats' sibling GetDAGNodes) and a
+ * just-finished one (CollectionService.Run's RunCollectionOutput.dagNodes). */
+export interface DagNodeRow {
+  name: string
+  status: string
+  duration_ms: number
+  level_idx: number
+  depends_on: string[]
+}

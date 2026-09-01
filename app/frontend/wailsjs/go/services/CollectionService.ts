@@ -15,6 +15,12 @@ export function PickFile(title: string, extension: string): Promise<string> {
   return callWailsMethod(window.go?.services?.CollectionService?.PickFile(title, extension))
 }
 
+export function PickSaveFile(title: string, defaultFilename: string): Promise<string> {
+  return callWailsMethod(
+    window.go?.services?.CollectionService?.PickSaveFile(title, defaultFilename),
+  )
+}
+
 export function Open(path: string): Promise<Collection> {
   return callWailsMethod(window.go?.services?.CollectionService?.Open(path))
 }

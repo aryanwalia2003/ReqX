@@ -8,15 +8,18 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  Checkbox,
   EmptyState,
   Field,
   Input,
+  Select,
 } from '@/components/ui'
-import { pickFile } from '@/features/collection-runner/api'
+import { pickFile, pickSaveFile } from '@/features/collection-runner/api'
 import { useOpenEnvironment } from '@/features/collection-runner/hooks/useOpenEnvironment'
 import { useOpenPersonas } from '@/features/collection-runner/hooks/useOpenPersonas'
 import { useRunCollection } from '@/features/collection-runner/hooks/useRunCollection'
 import type { Collection } from '@/features/collection-runner/types'
+import type { DagNodeRow } from '@/features/history'
 import { getErrorMessage } from '@/lib/errors'
 import { reportError } from '@/lib/reportError'
 
@@ -24,6 +27,8 @@ export interface CollectionRunnerPanelProps {
   /** Collection chuni gayi Collections sidebar se — null jab tak kuch select na ho. */
   selected: { path: string; collection: Collection } | null
 }
+
+const INJECT_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
 function parsePositiveInt(s: string): number | undefined {
   const n = parseInt(s, 10)
@@ -35,6 +40,17 @@ function parsePositiveFloat(s: string): number | undefined {
   return n > 0 ? n : undefined
 }
 
+/** DAG nodes ko level_idx se group karta, level order me sorted. */
+function groupByLevel(nodes: DagNodeRow[]): [number, DagNodeRow[]][] {
+  const byLevel = new Map<number, DagNodeRow[]>()
+  for (const node of nodes) {
+    const group = byLevel.get(node.level_idx) ?? []
+    group.push(node)
+    byLevel.set(node.level_idx, group)
+  }
+  return [...byLevel.entries()].sort(([a], [b]) => a - b)
+}
+
 /** Postman-lite ka doosra half: selected collection (+ optional environment, load-test knobs) run karo, results dekho. */
 export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) {
   const [envPath, setEnvPath] = useState('')
@@ -43,6 +59,17 @@ export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) 
   const [iterations, setIterations] = useState('')
   const [durationSec, setDurationSec] = useState('')
   const [rps, setRps] = useState('')
+
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [stages, setStages] = useState('')
+  const [noCookies, setNoCookies] = useState(false)
+  const [clearCookies, setClearCookies] = useState(false)
+  const [graphqlCheck, setGraphqlCheck] = useState(false)
+  const [exportPath, setExportPath] = useState('')
+  const [injectIndex, setInjectIndex] = useState('')
+  const [injectName, setInjectName] = useState('')
+  const [injectMethod, setInjectMethod] = useState('GET')
+  const [injectUrl, setInjectUrl] = useState('')
 
   const {
     data: environment,
@@ -87,6 +114,13 @@ export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) 
     await openPersonas(result.value)
   }
 
+  async function handleBrowseExport() {
+    const result = await pickSaveFile('Export results', 'results.ndjson')
+    if (!result.ok) return reportError(result.error, 'browse export save location')
+    if (!result.value) return // user cancelled
+    setExportPath(result.value)
+  }
+
   async function handleRun() {
     if (!selected) return
     const durationSeconds = parsePositiveFloat(durationSec)
@@ -98,6 +132,15 @@ export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) 
       durationMs: durationSeconds ? Math.round(durationSeconds * 1000) : undefined,
       rps: parsePositiveFloat(rps),
       personas,
+      stages: stages.trim() || undefined,
+      noCookies: noCookies || undefined,
+      clearCookies: clearCookies || undefined,
+      graphql: graphqlCheck || undefined,
+      exportPath: exportPath.trim() || undefined,
+      injectIndex: injectIndex.trim() || undefined,
+      injectName: injectName.trim() || undefined,
+      injectMethod: injectName.trim() ? injectMethod : undefined,
+      injectUrl: injectUrl.trim() || undefined,
     })
   }
 
@@ -183,6 +226,115 @@ export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) 
                     aria-label="Requests per second"
                   />
                 </Field>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  aria-label="Advanced options"
+                  aria-expanded={showAdvanced}
+                  className="text-fg-muted hover:text-fg flex items-center gap-1 text-xs font-medium"
+                >
+                  <span aria-hidden="true">{showAdvanced ? '▾' : '▸'}</span>
+                  Advanced options
+                </button>
+
+                {showAdvanced && (
+                  <div className="border-border bg-surface flex flex-col gap-3 rounded-md border p-3">
+                    <Field
+                      label="Stages (--stages)"
+                      hint='e.g. "10s:5,30s:20,10s:0" — ramps workers over time, overrides Workers/Duration above'
+                    >
+                      <Input
+                        value={stages}
+                        onChange={(e) => setStages(e.target.value)}
+                        placeholder="10s:5,30s:20,10s:0"
+                        aria-label="Stages"
+                      />
+                    </Field>
+
+                    <div className="flex flex-wrap gap-4">
+                      <label className="flex items-center gap-1.5 text-sm">
+                        <Checkbox
+                          checked={noCookies}
+                          onChange={(e) => setNoCookies(e.target.checked)}
+                        />
+                        No cookies
+                      </label>
+                      <label className="flex items-center gap-1.5 text-sm">
+                        <Checkbox
+                          checked={clearCookies}
+                          onChange={(e) => setClearCookies(e.target.checked)}
+                        />
+                        Clear cookies per request
+                      </label>
+                      <label className="flex items-center gap-1.5 text-sm">
+                        <Checkbox
+                          checked={graphqlCheck}
+                          onChange={(e) => setGraphqlCheck(e.target.checked)}
+                        />
+                        GraphQL error detection
+                      </label>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Input
+                        value={exportPath}
+                        onChange={(e) => setExportPath(e.target.value)}
+                        placeholder="Export results to… (optional)"
+                        className="flex-1"
+                        aria-label="Export path"
+                      />
+                      <Button variant="outline" onClick={() => void handleBrowseExport()}>
+                        Browse (save)…
+                      </Button>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-fg text-xs font-medium">
+                        Inject a request (temporary — collection file untouched)
+                      </span>
+                      <div className="flex gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={injectIndex}
+                          onChange={(e) => setInjectIndex(e.target.value)}
+                          placeholder="#"
+                          className="w-14"
+                          aria-label="Inject position"
+                        />
+                        <Select
+                          value={injectMethod}
+                          onChange={(e) => setInjectMethod(e.target.value)}
+                          className="w-28"
+                          aria-label="Inject method"
+                        >
+                          {INJECT_METHODS.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </Select>
+                        <Input
+                          value={injectName}
+                          onChange={(e) => setInjectName(e.target.value)}
+                          placeholder="Name"
+                          className="flex-1"
+                          aria-label="Inject name"
+                        />
+                        <Input
+                          value={injectUrl}
+                          onChange={(e) => setInjectUrl(e.target.value)}
+                          placeholder="URL"
+                          className="flex-1"
+                          aria-label="Inject URL"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -309,6 +461,37 @@ export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) 
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {output?.dagNodes && output.dagNodes.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Execution graph</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {groupByLevel(output.dagNodes).map(([level, nodes]) => (
+              <div key={level} className="flex flex-col gap-1">
+                <span className="text-fg-subtle text-xs font-medium">Level {level}</span>
+                <div className="flex flex-wrap gap-2">
+                  {nodes.map((node) => (
+                    <Badge
+                      key={node.name}
+                      variant={
+                        node.status === 'failed'
+                          ? 'outline'
+                          : node.status === 'skipped'
+                            ? 'subtle'
+                            : 'default'
+                      }
+                    >
+                      {node.name} · {node.status} · {node.duration_ms} ms
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}
