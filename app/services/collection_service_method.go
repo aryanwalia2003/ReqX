@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"log"
 	"strings"
 	"time"
@@ -154,6 +155,20 @@ func (s *CollectionService) Open(path string) (collection.Collection, error) {
 		return collection.Collection{}, errs.Wrap(err, errs.KindInvalidInput, "could not parse collection JSON")
 	}
 	return *coll, nil
+}
+
+// Save pretty-prints a collection as JSON and writes it to path — the
+// app-side equivalent of cmd/collection_cmd_ctor.go's saveCollection,
+// used by the desktop collection editor's New/Save flow.
+func (s *CollectionService) Save(coll collection.Collection, path string) error {
+	data, err := json.MarshalIndent(coll, "", "  ")
+	if err != nil {
+		return errs.Wrap(err, errs.KindInternal, "could not encode collection")
+	}
+	if err := storage.WriteJSONFile(path, data); err != nil {
+		return errs.Wrap(err, errs.KindInternal, "could not save collection file")
+	}
+	return nil
 }
 
 // OpenEnvironment reads and parses an environment file — the app-side

@@ -15,6 +15,7 @@ import {
   Select,
 } from '@/components/ui'
 import { pickFile, pickSaveFile } from '@/features/collection-runner/api'
+import { OpenInEditorButtons } from '@/features/collection-runner/components/OpenInEditorButtons'
 import { useOpenEnvironment } from '@/features/collection-runner/hooks/useOpenEnvironment'
 import { useOpenPersonas } from '@/features/collection-runner/hooks/useOpenPersonas'
 import { useRunCollection } from '@/features/collection-runner/hooks/useRunCollection'
@@ -166,9 +167,12 @@ export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) 
                   {selected.collection.requests.length} request
                   {selected.collection.requests.length === 1 ? '' : 's'}
                 </span>
-                <Button variant="primary" isLoading={isRunning} onClick={() => void handleRun()}>
-                  Run
-                </Button>
+                <div className="flex items-center gap-2">
+                  <OpenInEditorButtons path={selected.path} />
+                  <Button variant="primary" isLoading={isRunning} onClick={() => void handleRun()}>
+                    Run
+                  </Button>
+                </div>
               </div>
               <div className="border-border bg-surface flex flex-col divide-y rounded-md border">
                 {selected.collection.requests.map((req, i) => (
@@ -362,6 +366,7 @@ export function CollectionRunnerPanel({ selected }: CollectionRunnerPanelProps) 
             >
               Load env
             </Button>
+            <OpenInEditorButtons path={envPath.trim() || undefined} />
           </div>
 
           {envError && (

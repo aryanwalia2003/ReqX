@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import {
   Alert,
@@ -13,22 +13,15 @@ import {
   Select,
   Textarea,
 } from '@/components/ui'
+import type { AuthFieldsEditorHandle } from '@/features/send-request/components/AuthFieldsEditor'
+import { AuthFieldsEditor } from '@/features/send-request/components/AuthFieldsEditor'
 import { useSendRequest } from '@/features/send-request/hooks/useSendRequest'
-import type { AuthConfig, SendRequestInput } from '@/features/send-request/types'
+import type { SendRequestInput } from '@/features/send-request/types'
 import { getErrorMessage } from '@/lib/errors'
+import { emptyRow, rowSetters, rowsFrom, rowsToRecord } from '@/lib/keyValueRows'
+import type { KeyValueRow } from '@/lib/keyValueRows'
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
-
-interface HeaderRow {
-  id: number
-  key: string
-  value: string
-}
-
-let nextRowId = 1
-function emptyRow(): HeaderRow {
-  return { id: nextRowId++, key: '', value: '' }
-}
 
 /** JSON Content-Type ho to pretty-print, warna raw string laut deta. */
 function formatBody(body: string, contentType: string | undefined): string {
@@ -50,92 +43,17 @@ export interface SendRequestPanelProps {
   loadRequest?: SendRequestInput | null
 }
 
-function headerRowsFrom(headers: Record<string, string> | undefined): HeaderRow[] {
-  const entries = Object.entries(headers ?? {})
-  return entries.length > 0
-    ? entries.map(([key, value]) => ({ id: nextRowId++, key, value }))
-    : [emptyRow()]
-}
-
-/** Ek hi row-array (headers, cookies) ke liye reusable update/remove — is
- * component me do jagah same shape chahiye tha, isliye ek jagah nikaala. */
-function rowSetters(setRows: (updater: (rows: HeaderRow[]) => HeaderRow[]) => void) {
-  return {
-    update(id: number, patch: Partial<HeaderRow>) {
-      setRows((rows) => rows.map((row) => (row.id === id ? { ...row, ...patch } : row)))
-    },
-    remove(id: number) {
-      setRows((rows) => (rows.length > 1 ? rows.filter((row) => row.id !== id) : rows))
-    },
-  }
-}
-
-function rowsToRecord(rows: HeaderRow[]): Record<string, string> | undefined {
-  const record: Record<string, string> = {}
-  for (const row of rows) {
-    if (row.key.trim()) record[row.key.trim()] = row.value
-  }
-  return Object.keys(record).length > 0 ? record : undefined
-}
-
 /** Postman-lite: ek request banao, bhejo, response dekho — end-to-end Wails wiring. */
 export function SendRequestPanel({ loadRequest }: SendRequestPanelProps = {}) {
   const [method, setMethod] = useState(loadRequest?.method || 'GET')
   const [url, setUrl] = useState(loadRequest?.url ?? '')
-  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() =>
-    headerRowsFrom(loadRequest?.headers),
-  )
+  const [headerRows, setHeaderRows] = useState<KeyValueRow[]>(() => rowsFrom(loadRequest?.headers))
   const [body, setBody] = useState(loadRequest?.body ?? '')
-
-  const initialAuth = loadRequest?.auth
-  const [authType, setAuthType] = useState<AuthConfig['type']>(initialAuth?.type ?? 'none')
-  const [bearerToken, setBearerToken] = useState(
-    initialAuth?.type === 'bearer' ? (initialAuth.token ?? '') : '',
-  )
-  const [basicUsername, setBasicUsername] = useState(
-    initialAuth?.type === 'basic' ? (initialAuth.username ?? '') : '',
-  )
-  const [basicPassword, setBasicPassword] = useState(
-    initialAuth?.type === 'basic' ? (initialAuth.password ?? '') : '',
-  )
-  const [apiKeyName, setApiKeyName] = useState(
-    initialAuth?.type === 'apikey' ? (initialAuth.key ?? '') : '',
-  )
-  const [apiKeyValue, setApiKeyValue] = useState(
-    initialAuth?.type === 'apikey' ? (initialAuth.value ?? '') : '',
-  )
-  const [apiKeyIn, setApiKeyIn] = useState<'header' | 'query'>(
-    initialAuth?.type === 'apikey' ? (initialAuth.in ?? 'header') : 'header',
-  )
-  const [cookieRows, setCookieRows] = useState<HeaderRow[]>(() =>
-    headerRowsFrom(initialAuth?.type === 'cookie' ? initialAuth.cookies : undefined),
-  )
+  const authRef = useRef<AuthFieldsEditorHandle>(null)
 
   const { data, error, isLoading, run } = useSendRequest()
 
   const headerHandlers = rowSetters(setHeaderRows)
-  const cookieHandlers = rowSetters(setCookieRows)
-
-  function buildAuth(): AuthConfig | undefined {
-    switch (authType) {
-      case 'bearer':
-        return bearerToken.trim() ? { type: 'bearer', token: bearerToken.trim() } : undefined
-      case 'basic':
-        return basicUsername.trim()
-          ? { type: 'basic', username: basicUsername.trim(), password: basicPassword }
-          : undefined
-      case 'apikey':
-        return apiKeyName.trim()
-          ? { type: 'apikey', key: apiKeyName.trim(), value: apiKeyValue, in: apiKeyIn }
-          : undefined
-      case 'cookie': {
-        const cookies = rowsToRecord(cookieRows)
-        return cookies ? { type: 'cookie', cookies } : undefined
-      }
-      default:
-        return undefined
-    }
-  }
 
   async function handleSend() {
     const input: SendRequestInput = {
@@ -143,7 +61,7 @@ export function SendRequestPanel({ loadRequest }: SendRequestPanelProps = {}) {
       url,
       headers: rowsToRecord(headerRows),
       body: body || undefined,
-      auth: buildAuth(),
+      auth: authRef.current?.getValue(),
     }
 
     const result = await run(input)
@@ -191,113 +109,7 @@ export function SendRequestPanel({ loadRequest }: SendRequestPanelProps = {}) {
             </Button>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Field label="Auth type">
-              <Select
-                value={authType}
-                onChange={(e) => setAuthType(e.target.value as AuthConfig['type'])}
-                aria-label="Auth type"
-              >
-                <option value="none">None</option>
-                <option value="bearer">Bearer token</option>
-                <option value="basic">Basic auth</option>
-                <option value="apikey">API key</option>
-                <option value="cookie">Cookie</option>
-              </Select>
-            </Field>
-
-            {authType === 'bearer' && (
-              <Field label="Token">
-                <Input
-                  value={bearerToken}
-                  onChange={(e) => setBearerToken(e.target.value)}
-                  placeholder="token"
-                  aria-label="Bearer token"
-                />
-              </Field>
-            )}
-
-            {authType === 'basic' && (
-              <div className="flex gap-2">
-                <Field label="Username" className="flex-1">
-                  <Input
-                    value={basicUsername}
-                    onChange={(e) => setBasicUsername(e.target.value)}
-                    aria-label="Basic auth username"
-                  />
-                </Field>
-                <Field label="Password" className="flex-1">
-                  <Input
-                    type="password"
-                    value={basicPassword}
-                    onChange={(e) => setBasicPassword(e.target.value)}
-                    aria-label="Basic auth password"
-                  />
-                </Field>
-              </div>
-            )}
-
-            {authType === 'apikey' && (
-              <div className="flex gap-2">
-                <Field label="Key" className="flex-1">
-                  <Input
-                    value={apiKeyName}
-                    onChange={(e) => setApiKeyName(e.target.value)}
-                    aria-label="API key name"
-                  />
-                </Field>
-                <Field label="Value" className="flex-1">
-                  <Input
-                    value={apiKeyValue}
-                    onChange={(e) => setApiKeyValue(e.target.value)}
-                    aria-label="API key value"
-                  />
-                </Field>
-                <Field label="Add to">
-                  <Select
-                    value={apiKeyIn}
-                    onChange={(e) => setApiKeyIn(e.target.value as 'header' | 'query')}
-                    aria-label="API key location"
-                  >
-                    <option value="header">Header</option>
-                    <option value="query">Query param</option>
-                  </Select>
-                </Field>
-              </div>
-            )}
-
-            {authType === 'cookie' && (
-              <div className="flex flex-col gap-1.5">
-                <span className="text-fg text-sm font-medium">Cookies</span>
-                {cookieRows.map((row) => (
-                  <div key={row.id} className="flex gap-2">
-                    <Input
-                      value={row.key}
-                      onChange={(e) => cookieHandlers.update(row.id, { key: e.target.value })}
-                      placeholder="Cookie-Name"
-                      className="flex-1"
-                      aria-label="Cookie name"
-                    />
-                    <Input
-                      value={row.value}
-                      onChange={(e) => cookieHandlers.update(row.id, { value: e.target.value })}
-                      placeholder="value"
-                      className="flex-1"
-                      aria-label="Cookie value"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Remove cookie"
-                      onClick={() => cookieHandlers.remove(row.id)}
-                    >
-                      ×
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <AuthFieldsEditor ref={authRef} initial={loadRequest?.auth} />
 
           <div className="flex flex-col gap-1.5">
             <span className="text-fg text-sm font-medium">Headers</span>

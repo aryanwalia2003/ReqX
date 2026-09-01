@@ -25,6 +25,14 @@ export function Open(path: string): Promise<Collection> {
   return callWailsMethod(window.go?.services?.CollectionService?.Open(path))
 }
 
+export function Save(collection: Collection, path: string): Promise<void> {
+  return callWailsMethod(window.go?.services?.CollectionService?.Save(collection, path))
+}
+
+export function OpenInEditor(kind: string, path: string): Promise<void> {
+  return callWailsMethod(window.go?.services?.CollectionService?.OpenInEditor(kind, path))
+}
+
 export function OpenEnvironment(path: string): Promise<Environment> {
   return callWailsMethod(window.go?.services?.CollectionService?.OpenEnvironment(path))
 }

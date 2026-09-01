@@ -40,6 +40,8 @@ declare global {
           PickFile(title: string, extension: string): Promise<string>
           PickSaveFile(title: string, defaultFilename: string): Promise<string>
           Open(path: string): Promise<Collection>
+          Save(collection: Collection, path: string): Promise<void>
+          OpenInEditor(kind: string, path: string): Promise<void>
           OpenEnvironment(path: string): Promise<Environment>
           OpenPersonas(path: string): Promise<Persona[]>
           Run(input: RunCollectionInput): Promise<RunCollectionOutput>

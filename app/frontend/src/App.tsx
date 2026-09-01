@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui'
+import { CollectionEditorPanel } from '@/features/collection-editor'
 import { CollectionRunnerPanel, CollectionsSidebar } from '@/features/collection-runner'
 import type { Collection } from '@/features/collection-runner'
 import { HistoryPanel } from '@/features/history'
@@ -48,6 +49,7 @@ function App() {
             <TabsList>
               <TabsTrigger value="send">Send request</TabsTrigger>
               <TabsTrigger value="run">Run collection</TabsTrigger>
+              <TabsTrigger value="edit">Edit collection</TabsTrigger>
               <TabsTrigger value="socket">Socket debugger</TabsTrigger>
               <TabsTrigger value="history">History</TabsTrigger>
             </TabsList>
@@ -56,6 +58,9 @@ function App() {
             </TabsContent>
             <TabsContent value="run" className="pt-4">
               <CollectionRunnerPanel selected={selected} />
+            </TabsContent>
+            <TabsContent value="edit" className="pt-4">
+              <CollectionEditorPanel key={selected?.path ?? 'new'} selected={selected} />
             </TabsContent>
             <TabsContent value="socket" className="pt-4">
               <SocketDebuggerPanel />

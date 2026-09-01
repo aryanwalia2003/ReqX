@@ -43,6 +43,38 @@ func TestCollectionService_Open(t *testing.T) {
 	}
 }
 
+func TestCollectionService_Save(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "new-collection.json")
+
+	s := NewCollectionService(nil)
+	coll := collection.Collection{
+		Name: "New",
+		Requests: []collection.Request{
+			{Name: "Ping", Method: "GET", URL: "https://api.example.com/ping"},
+		},
+	}
+	if err := s.Save(coll, path); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	got, err := s.Open(path)
+	if err != nil {
+		t.Fatalf("Open() after Save() error = %v", err)
+	}
+	if got.Name != "New" || len(got.Requests) != 1 || got.Requests[0].Name != "Ping" {
+		t.Errorf("round-tripped collection = %+v, want New collection with 1 request named 'Ping'", got)
+	}
+}
+
+func TestCollectionService_Save_InvalidPath(t *testing.T) {
+	s := NewCollectionService(nil)
+	err := s.Save(collection.Collection{Name: "X"}, filepath.Join(t.TempDir(), "missing-dir", "x.json"))
+	if err == nil {
+		t.Fatal("expected an error saving to a directory that doesn't exist")
+	}
+}
+
 func TestCollectionService_Open_MissingFile(t *testing.T) {
 	s := NewCollectionService(nil)
 	if _, err := s.Open(filepath.Join(t.TempDir(), "does-not-exist.json")); err == nil {
